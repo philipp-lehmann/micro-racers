@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>MICRO RACERS</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+    }
+
+    canvas {
+      display: block;
+      cursor: default;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    // ── CANVAS SETUP ──────────────────────────────────
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const W = 1600, H = 1140;  // logical canvas dimensions in pixels
+    canvas.width = W; canvas.height = H;
+
+    // Scale canvas to fill the browser window while preserving aspect ratio
+    function resize() {
+      const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+      canvas.style.width = (W * scale) + 'px';
+      canvas.style.height = (H * scale) + 'px';
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // ── COLOR PALETTE ─────────────────────────────────
+    const COLORS = {
+      bg:    '#000c18',  // dark navy background
+      grid:  '#001628',  // subtle grid lines
+      trk:   '#001a28',  // track surface fill
+      ui:    '#00ff88',  // primary UI green
+      dim:   '#003322',  // dimmed green
+      wh:    '#aaffcc',  // light text
+      muted: '#006655',  // muted / inactive text
+      // Player car colors: cyan, red, yellow, purple
+      pc: ['#00ffff', '#ff3355', '#ffee00', '#cc44ff'],
+      ai: '#1e3a50',     // AI car color (dark blue-grey)
+    };
+
+    // ── TRACK DEFINITIONS ─────────────────────────────
+    // Each track is a closed loop of [x, y] control points fed into a Catmull-Rom
+    // spline. The resulting spline is then extruded to left/right edges (width = TRACK_WIDTH).
+    const TRACK_DEFS = [
+
+      {
+        name: 'LITTLE',
+        sub:  'DEMO',
+        col:  '#abbbff',
+        pts: [
+          [400, 400], [500, 300], [550, 600], 
+        ],
+      },
+      {
+        name: 'BILLIARD TABLE',
+        sub:  'FIGURE 8 LOOP',
+        col:  '#abbbff',
+        pts: [
+          [400, 560], [426, 460], [499, 386], [600, 360], [699, 386], [773, 459],
+          [800, 550], [826, 660], [900, 733], [1000, 760], [1100, 733], [1173, 660],
+          [1200, 560], [1173, 459], [1099, 386], [1000, 360], [899, 386], [826, 460],
+          [800, 550], [773, 660], [700, 733], [600, 760], [500, 733], [426, 660],
+        ],
+      },
+      {
+        name: 'BREAKFAST TABLE',
+        sub:  'OVAL CIRCUIT',
+        col:  '#00ff88',
+        pts: [
+          [800, 88], [1090, 104], [1316, 224], [1410, 510], [1384, 796], [1194, 976],
+          [800, 1016], [406, 976], [216, 796], [190, 510], [284, 224], [510, 104],
+        ],
+      },
+      {
+        name: 'WORK DESK',
+        sub:  'TECHNICAL TRACK',
+        col:  '#ff8822',
+        pts: [
+          [800, 100], [1080, 100], [1276, 200], [1320, 390], [1256, 530], [1010, 540],
+          [1010, 716], [1136, 836], [1236, 930], [800, 980], [364, 930], [464, 836],
+          [590, 716], [590, 540], [344, 530], [280, 390], [324, 200], [520, 100],
+        ],
+      },
+    ];
+
+    // ── SPLINE & GEOMETRY ─────────────────────────────
+
+    /**
+     * Generates a smooth closed Catmull-Rom spline through the control points.
+     * @param {number[][]} pts - Array of [x, y] control points
+     * @param {number}     res - Number of output segments between each pair of points
+     * @returns {number[][]} Dense array of [x, y] positions along the spline
+     */
+    function buildSpline(pts, res) {
+      res = res || 14;
+      const numPts = pts.length;
+      const out = [];
+      for (let i = 0; i < numPts; i++) {
+        // Catmull-Rom needs four surrounding points; wrap indices for the closed loop
+        const p0 = pts[(i - 1 + numPts) % numPts];
+        const p1 = pts[i];
+        const p2 = pts[(i + 1) % numPts];
+        const p3 = pts[(i + 2) % numPts];
+        for (let j = 0; j < res; j++) {
+          const t = j / res, t2 = t * t, t3 = t2 * t;
+          // Standard Catmull-Rom matrix formula
+          out.push([
+            .5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+            .5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
+          ]);
+        }
+      }
+      return out;
+    }
+
+    /**
+     * Extrudes a spline into left and right boundary edges at a given track width.
+     * Uses the perpendicular normal at each spline point.
+     * @returns {{ leftEdge: number[][], rightEdge: number[][] }}
+     */
+    function buildEdges(spline, trackWidth) {
+      const numPts = spline.length;
+      const leftEdge = [], rightEdge = [];
+      for (let i = 0; i < numPts; i++) {
+        // Tangent approximated by looking at the previous and next spline points
+        const prev = spline[(i - 1 + numPts) % numPts];
+        const next = spline[(i + 1) % numPts];
+        const dx = next[0] - prev[0], dy = next[1] - prev[1];
+        const len = Math.hypot(dx, dy) || 1;
+        // Normal is 90° CCW from the tangent
+        const nx = -dy / len, ny = dx / len;
+        leftEdge.push([spline[i][0] + nx * trackWidth * .5, spline[i][1] + ny * trackWidth * .5]);
+        rightEdge.push([spline[i][0] - nx * trackWidth * .5, spline[i][1] - ny * trackWidth * .5]);
+      }
+      return { leftEdge, rightEdge };
+    }
+
+    // ── TRACK DATA (pre-computed) ──────────────────────
+    const TRACK_WIDTH = 72;  // road width in logical pixels; also used for on-track detection
+    const TRACKS = TRACK_DEFS.map(def => {
+      const spline = buildSpline(def.pts, 14);
+      const edges  = buildEdges(spline, TRACK_WIDTH);
+      // Pre-compute cumulative arc-lengths so trackProgress() can work in O(n) each frame
+      const cumulativeLengths = [0];
+      for (let i = 1; i < spline.length; i++)
+        cumulativeLengths.push(cumulativeLengths[i - 1] +
+          Math.hypot(spline[i][0] - spline[i - 1][0], spline[i][1] - spline[i - 1][1]));
+      // Total perimeter includes the wrap-around closing segment
+      const totalLength = cumulativeLengths[cumulativeLengths.length - 1] +
+        Math.hypot(spline[0][0] - spline[spline.length - 1][0], spline[0][1] - spline[spline.length - 1][1]);
+      return { ...def, spline, edges, cumulativeLengths, totalLength };
+    });
+
+    // ── GEOMETRY HELPERS ──────────────────────────────
+
+    /** Minimum distance from point (px, py) to line segment (ax, ay)→(bx, by). */
+    function distToSegment(px, py, ax, ay, bx, by) {
+      const dx = bx - ax, dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (!lenSq) return Math.hypot(px - ax, py - ay);
+      // Project point onto segment, clamped to [0, 1]
+      const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    }
+
+    /** Returns the minimum distance from (x, y) to the track centerline. */
+    function nearestTrackDist(x, y, track) {
+      const spline = track.spline;
+      let minDist = Infinity;
+      for (let i = 0; i < spline.length; i++) {
+        const j = (i + 1) % spline.length;
+        minDist = Math.min(minDist, distToSegment(x, y, spline[i][0], spline[i][1], spline[j][0], spline[j][1]));
+      }
+      return minDist;
+    }
+
+    /**
+     * Returns how far around the track a position is, as a fraction 0.0–1.0.
+     * Uses arc-length parameterisation so the value is physically meaningful.
+     */
+    function trackProgress(x, y, track) {
+      const spline = track.spline;
+      const numPts = spline.length;
+      let minDist = Infinity, nearestSegIdx = 0, nearestT = 0;
+      for (let i = 0; i < numPts; i++) {
+        const j = (i + 1) % numPts;
+        const dx = spline[j][0] - spline[i][0], dy = spline[j][1] - spline[i][1];
+        const lenSq = dx * dx + dy * dy;
+        const t = lenSq
+          ? Math.max(0, Math.min(1, ((x - spline[i][0]) * dx + (y - spline[i][1]) * dy) / lenSq))
+          : 0;
+        const d = Math.hypot(x - (spline[i][0] + t * dx), y - (spline[i][1] + t * dy));
+        if (d < minDist) { minDist = d; nearestSegIdx = i; nearestT = t; }
+      }
+      const segLen = (nearestSegIdx + 1 < numPts)
+        ? track.cumulativeLengths[nearestSegIdx + 1] - track.cumulativeLengths[nearestSegIdx]
+        : track.totalLength - track.cumulativeLengths[nearestSegIdx];
+      return (track.cumulativeLengths[nearestSegIdx] + nearestT * segLen) / track.totalLength;
+    }
+
+    /** Formats elapsed seconds as "M:SS.ms" (e.g. 1:07.43). */
+    function formatTime(seconds) {
+      const minutes = Math.floor(seconds / 60);
+      return minutes + ':' + (seconds % 60).toFixed(2).padStart(5, '0');
+    }
+
+    /** Returns true if canvas point (mx, my) falls inside the rectangle (x, y, w, h). */
+    function inBox(mx, my, x, y, w, h) {
+      return mx >= x && mx <= x + w && my >= y && my <= y + h;
+    }
+
+    // ── INPUT ─────────────────────────────────────────
+    const keys = {};  // set of currently-held keyboard keys
+    document.addEventListener('keydown', e => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      keys[e.key] = true;
+    });
+    document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+    // Keyboard bindings for each of the four player slots
+    const CONTROLS = [
+      { up: 'ArrowUp', dn: 'ArrowDown',  lt: 'ArrowLeft', rt: 'ArrowRight' }, // P1: arrow keys
+      { up: 'w',       dn: 's',          lt: 'a',         rt: 'd'          }, // P2: WASD
+      { up: 'i',       dn: 'k',          lt: 'j',         rt: 'l'          }, // P3: IJKL
+      { up: '8',       dn: '2',          lt: '4',         rt: '6'          }, // P4: numpad
+    ];
+
+    // Mouse position tracked in logical canvas coordinates
+    const mouse = { x: 0, y: 0, click: false };
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = (e.clientX - rect.left) * (W / rect.width);
+      mouse.y = (e.clientY - rect.top)  * (H / rect.height);
+    });
+    canvas.addEventListener('click', e => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = (e.clientX - rect.left) * (W / rect.width);
+      mouse.y = (e.clientY - rect.top)  * (H / rect.height);
+      mouse.click = true;
+    });
+
+    // ── GAME STATE ────────────────────────────────────
+    let screen        = 'start';  // 'start' | 'countdown' | 'race' | 'results'
+    let selectedTrack = 0;        // index into TRACKS
+    let numPlayers    = 1;        // how many human players (1, 2, or 4)
+    let cars          = [];       // all four car objects
+    let finishOrder   = [];       // car IDs in the order they finished
+    let raceTime      = 0;        // total elapsed race time in seconds
+    let countdownNum  = 3;        // current countdown digit shown (3 → 2 → 1 → GO!)
+    let countdownTime = 0;        // how far through the current 1-second tick (0–1)
+    let particles     = [];       // active particle objects
+    const LAPS        = 1;        // number of laps per race
+    let titlePulse    = 0;        // animation clock for the title-screen glow
+    let resultsCooldown = 0;      // seconds before results buttons become clickable
+
+    // ── ISOMETRIC CAMERA ──────────────────────────────
+    const ISO_SCALE = Math.SQRT1_2;  // cos45 = sin45 = 1/√2
+    let camera = { x: 800, y: 570, zoom: 0.8 };
+
+    // ── PHYSICS CONSTANTS ─────────────────────────────
+    const MAX_SPEED   = 220;  // top forward speed (px/s)
+    const MAX_REVERSE = 65;   // top reverse speed (px/s)
+    const ACCEL       = 210;  // forward acceleration (px/s²)
+    const BRAKE       = 260;  // braking deceleration (px/s²)
+    const FRICTION    = 95;   // passive drag when not on throttle (px/s²)
+    const TURN_RATE   = 3.0;  // maximum angular turn rate (rad/s), scaled by speed
+
+    // ── CAR FACTORY ───────────────────────────────────
+    /**
+     * Creates a car object positioned on the starting grid.
+     * Cars are staggered in two columns (left/right) and rows (front/back)
+     * just behind the start/finish line.
+     */
+    function makeCar(id, isAI, color) {
+      const track  = TRACKS[selectedTrack];
+      const spline = track.spline;
+      const row    = Math.floor(id / 2);
+      const side   = (id % 2 === 0) ? -1 : 1;  // left or right of centerline
+      const startIdx = (spline.length - row * 6 + spline.length) % spline.length;
+      const nextPt   = spline[(startIdx + 1) % spline.length];
+      const angle    = Math.atan2(nextPt[1] - spline[startIdx][1], nextPt[0] - spline[startIdx][0]);
+      // Perpendicular offset direction so paired cars sit side-by-side
+      const lateralX = Math.cos(angle + Math.PI / 2);
+      const lateralY = Math.sin(angle + Math.PI / 2);
+      const x = spline[startIdx][0] + lateralX * side * 17;
+      const y = spline[startIdx][1] + lateralY * side * 17;
+      return {
+        id, isAI, color,
+        x, y, angle,
+        speed: 0, steering: 0, throttle: 0,
+        laps: 0,
+        progress:     trackProgress(x, y, track),
+        lastProgress: 0,
+        canCountLap:  false,   // must cross halfway before the finish line counts
+        aiTarget:     (startIdx + 10) % spline.length,  // next waypoint for the AI
+        onTrack:      true,
+        done: false, finishTime: 0,
+        label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
+        skidTimer: 0,
+        lapStart: 0, bestLap: Infinity,
+      };
+    }
+
+    function initRace() {
+      cars = []; finishOrder = []; raceTime = 0; particles = [];
+      for (let i = 0; i < 4; i++)
+        cars.push(makeCar(i, i >= numPlayers, i < numPlayers ? COLORS.pc[i] : COLORS.ai));
+      camera.x = cars.reduce((s, c) => s + c.x, 0) / cars.length;
+      camera.y = cars.reduce((s, c) => s + c.y, 0) / cars.length;
+      camera.zoom = 1.25;
+    }
+
+    // ── PARTICLES ─────────────────────────────────────
+
+    /** Emits a skid-mark particle at the car position (rate-limited by skidTimer). */
+    function spawnSkid(car) {
+      if (car.skidTimer > 0) return;
+      car.skidTimer = 0.08;
+      particles.push({ x: car.x, y: car.y, life: 0.9, maxLife: 0.9, type: 'skid', color: car.color });
+    }
+
+    /** Emits an explosion of 28 burst particles (e.g. when a car crosses the finish line). */
+    function spawnBurst(x, y, color) {
+      for (let i = 0; i < 28; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 110;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+          life: 0.8 + Math.random() * 0.6, maxLife: 1.4,
+          type: 'burst', color,
+        });
+      }
+    }
+
+    // ── CAR PHYSICS ───────────────────────────────────
+
+    /** Advances a single car's physics and AI/input state by dt seconds. */
+    function updateCar(car, dt) {
+      if (car.done) return;
+      const track = TRACKS[selectedTrack];
+
+      // ── Input ──────────────────────────────────────
+      if (car.isAI) {
+        // Steer toward the next waypoint on the spline centerline
+        const spline = track.spline;
+        const target = spline[car.aiTarget];
+        const dx = target[0] - car.x, dy = target[1] - car.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 40) car.aiTarget = (car.aiTarget + 4) % spline.length;
+        let angleDiff = Math.atan2(dy, dx) - car.angle;
+        // Normalize to [-π, π]
+        while (angleDiff >  Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        car.steering = Math.max(-1, Math.min(1, angleDiff * 3));
+        // Back off throttle when turning sharply to stay on the racing line
+        car.throttle = Math.abs(angleDiff) > 0.9 ? 0.55 : 0.92;
+      } else {
+        const ctrl = CONTROLS[car.id];
+        car.throttle = keys[ctrl.up] ? 1 : (keys[ctrl.dn] ? -1 : 0);
+        car.steering = keys[ctrl.lt] ? -1 : (keys[ctrl.rt] ? 1 : 0);
+      }
+
+      // ── Speed update ───────────────────────────────
+      const topSpeed = car.onTrack ? MAX_SPEED : 90;  // off-track cars are slowed
+      if (car.throttle > 0) {
+        car.speed = Math.min(car.speed + ACCEL * car.throttle * dt, topSpeed);
+      } else if (car.throttle < 0) {
+        // Brake first; only start reversing once fully stopped
+        if (car.speed > 0) car.speed = Math.max(0, car.speed - BRAKE * dt);
+        else               car.speed = Math.max(-MAX_REVERSE, car.speed - ACCEL * .4 * dt);
+      } else {
+        // Passive friction coasts the car to a stop
+        const frictionDelta = FRICTION * dt;
+        car.speed = Math.abs(car.speed) < frictionDelta ? 0 : car.speed - Math.sign(car.speed) * frictionDelta;
+      }
+
+      // ── Steering ───────────────────────────────────
+      // Turn rate scales with speed so the car can't pirouette when almost stationary
+      const speedFactor = Math.min(1, Math.abs(car.speed) / 60);
+      car.angle += car.steering * TURN_RATE * speedFactor * dt;
+
+      // ── Position ───────────────────────────────────
+      car.x += Math.cos(car.angle) * car.speed * dt;
+      car.y += Math.sin(car.angle) * car.speed * dt;
+      car.x = Math.max(6, Math.min(W - 6, car.x));
+      car.y = Math.max(6, Math.min(H - 6, car.y));
+
+      // ── Off-track detection ────────────────────────
+      car.onTrack = nearestTrackDist(car.x, car.y, track) < TRACK_WIDTH / 2 + 3;
+      if (!car.onTrack) {
+        // Exponential speed decay: ~85% speed retained per second of off-track driving
+        car.speed *= Math.pow(0.85, 60 * dt);
+        if (Math.abs(car.speed) > 10) spawnSkid(car);
+      }
+
+      // ── Skid marks when cornering hard at speed ────
+      if (Math.abs(car.steering) > 0.7 && Math.abs(car.speed) > 100) spawnSkid(car);
+      if (car.skidTimer > 0) car.skidTimer -= dt;
+
+      // ── Lap counting ──────────────────────────────
+      car.lastProgress = car.progress;
+      car.progress = trackProgress(car.x, car.y, track);
+
+      // 1. Set the flag once the car actually crosses the halfway point from below
+      if (car.progress > 0.5 && car.lastProgress < 0.5) car.canCountLap = true;
+
+      // 2. ONLY use this block to handle lap increments
+      if (car.canCountLap && car.lastProgress > 0.86 && car.progress < 0.14 && car.speed > 8) {
+        if (car.laps > 0) {
+          const lapTime = raceTime - car.lapStart;
+          if (lapTime < car.bestLap) car.bestLap = lapTime;
+        }
+        car.lapStart = raceTime;
+        car.laps++;
+        // Reset flag so they must loop all the way around again
+        car.canCountLap = false;
+
+        if (car.laps >= LAPS && !car.done) {
+          car.done = true;
+          car.finishTime = raceTime;
+          finishOrder.push(car.id);
+          spawnBurst(car.x, car.y, car.color);
+        }
+      }
+
+      // 3. Penalise reversing across the start/finish line
+      if (car.lastProgress < 0.14 && car.progress > 0.86 && car.speed < -5) {
+        car.laps = Math.max(0, car.laps - 1);
+      }
+    }
+
+    function updateParticles(dt) {
+      particles.forEach(p => {
+        p.life -= dt;
+        if (p.type === 'burst') {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vy += 60 * dt;  // gravity pulls burst particles downward
+        }
+      });
+    }
+
+    // ── DRAW ─────────────────────────────────────────
+
+    function drawBg() {
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(0, 0, W, H);
+      // Subtle dot-grid for the retro aesthetic
+      ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 0.5;
+      for (let x = 0; x <= W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+      for (let y = 0; y <= H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    }
+
+    function drawTrack(track, alpha) {
+      if (alpha === undefined) alpha = 1;
+      ctx.save(); ctx.globalAlpha = alpha;
+      const { spline, edges, col } = track;
+      const numPts = spline.length;
+
+      // Fill the track surface; even-odd rule handles the figure-8 self-intersection correctly
+      ctx.beginPath();
+      ctx.moveTo(edges.leftEdge[0][0], edges.leftEdge[0][1]);
+      for (let i = 1; i < numPts; i++) ctx.lineTo(edges.leftEdge[i][0], edges.leftEdge[i][1]);
+      ctx.closePath();
+      ctx.moveTo(edges.rightEdge[0][0], edges.rightEdge[0][1]);
+      for (let i = 1; i < numPts; i++) ctx.lineTo(edges.rightEdge[i][0], edges.rightEdge[i][1]);
+      ctx.closePath();
+      ctx.fillStyle = COLORS.trk; ctx.fill('evenodd');
+
+      // Glowing coloured edge lines
+      [edges.leftEdge, edges.rightEdge].forEach(edge => {
+        ctx.beginPath(); ctx.moveTo(edge[0][0], edge[0][1]);
+        for (let i = 1; i < numPts; i++) ctx.lineTo(edge[i][0], edge[i][1]);
+        ctx.closePath();
+        ctx.strokeStyle = col; ctx.lineWidth = 1.6;
+        ctx.shadowColor = col; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
+      });
+
+      // Dashed centerline
+      ctx.setLineDash([10, 24]); ctx.strokeStyle = '#002a1a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(spline[0][0], spline[0][1]);
+      for (let i = 1; i < numPts; i++) ctx.lineTo(spline[i][0], spline[i][1]);
+      ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+
+      // Chequered start/finish line drawn across the track at spline index 0
+      const lx = edges.leftEdge[0][0],  ly = edges.leftEdge[0][1];
+      const rx = edges.rightEdge[0][0], ry = edges.rightEdge[0][1];
+      const lineAngle  = Math.atan2(ry - ly, rx - lx);
+      const lineLength = Math.hypot(rx - lx, ry - ly);
+      const squareSize = 7;
+      const numSquares = Math.floor(lineLength / squareSize);
+      ctx.save(); ctx.translate(lx, ly); ctx.rotate(lineAngle);
+      for (let i = 0; i < numSquares; i++) {
+        ctx.fillStyle = (i % 2 === 0) ? '#ffffff' : '#111111';
+        ctx.fillRect(i * squareSize, -squareSize / 2, squareSize, squareSize);
+      }
+      ctx.restore();
+      ctx.restore();
+    }
+
+    function drawParticles() {
+      particles = particles.filter(p => p.life > 0);
+      particles.forEach(p => {
+        const fadeAlpha = p.life / p.maxLife;
+        ctx.save(); ctx.globalAlpha = fadeAlpha;
+        if (p.type === 'burst') {
+          ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 6;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 3 * fadeAlpha, 0, Math.PI * 2); ctx.fill();
+        } else {
+          // Skid marks: hollow ring that fades out in place
+          ctx.strokeStyle = p.color + '44'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
+
+    function drawCar(car, withLabel = true) {
+      const carWidth = 22, carHeight = 12;
+      ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.angle);
+      // Body outline; human cars glow brighter than AI cars
+      ctx.shadowColor = car.color; ctx.shadowBlur = car.onTrack ? 14 : 4;
+      ctx.strokeStyle = car.color; ctx.lineWidth = car.isAI ? 1 : 1.8;
+      ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
+      // Windscreen area (semi-transparent fill at the rear of the body)
+      ctx.fillStyle = car.color + '44';
+      ctx.fillRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
+      ctx.strokeStyle = car.color; ctx.lineWidth = 0.8;
+      ctx.strokeRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
+      // Front headlight dot
+      ctx.fillStyle = car.color;
+      ctx.beginPath(); ctx.arc(carWidth / 2 - 1, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+      // Speed-streak lines trailing behind human players at high speed
+      if (!car.isAI && Math.abs(car.speed) > 140) {
+        ctx.globalAlpha = 0.25; ctx.strokeStyle = car.color; ctx.lineWidth = 1;
+        [-3, 0, 3].forEach(offset => {
+          ctx.beginPath();
+          ctx.moveTo(-carWidth / 2 - 2, offset);
+          ctx.lineTo(-carWidth / 2 - 10, offset);
+          ctx.stroke();
+        });
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+      if (withLabel) {
+        // Car label drawn in world space just below the car body
+        ctx.save();
+        ctx.font = '14px Courier New'; ctx.fillStyle = car.color;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(car.label, car.x, car.y + carHeight / 2 + 4);
+        ctx.restore();
+      }
+    }
+
+    /** Converts a world-space point to screen-space under the current iso camera. */
+    function worldToScreen(wx, wy) {
+      const dx = (wx - camera.x) * camera.zoom;
+      const dy = (wy - camera.y) * camera.zoom;
+      return {
+        x: W / 2 + (dx - dy) * ISO_SCALE,
+        y: H / 2 + (dx + dy) * 0.5 * ISO_SCALE,
+      };
+    }
+
+    /** Smooth-follows the centroid of human players and adjusts zoom for spread. */
+    function updateCamera(dt) {
+      const humanCars = cars.filter(c => !c.isAI);
+      const targets = humanCars.length ? humanCars : cars;
+      const cx = targets.reduce((s, c) => s + c.x, 0) / targets.length;
+      const cy = targets.reduce((s, c) => s + c.y, 0) / targets.length;
+      let spread = 0;
+      if (targets.length > 1) {
+        const xs = targets.map(c => c.x), ys = targets.map(c => c.y);
+        spread = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      }
+      // Speed-based zoom: close when slow, pulls back at full throttle
+      const avgSpeed = targets.reduce((s, c) => s + Math.abs(c.speed), 0) / targets.length;
+      const speedZoom = 1.5 - (avgSpeed / MAX_SPEED) * 0.5;  // 1.25 at rest → 0.75 at max speed
+      // Spread-based zoom: zoom out when players are far apart
+      const spreadFactor = 560 / (spread + 560);
+      const targetZoom = Math.max(0.35, speedZoom * spreadFactor);
+      const lerpSpeed = 3;
+      camera.x += (cx - camera.x) * lerpSpeed * dt;
+      camera.y += (cy - camera.y) * lerpSpeed * dt;
+      camera.zoom += (targetZoom - camera.zoom) * lerpSpeed * dt;
+    }
+
+    /** Draws car labels in screen space (called after restoring the iso transform). */
+    function drawCarLabels() {
+      cars.forEach(car => {
+        const s = worldToScreen(car.x, car.y);
+        ctx.save();
+        ctx.font = '14px Courier New'; ctx.fillStyle = car.color;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(car.label, s.x, s.y + 8);
+        ctx.restore();
+      });
+    }
+
+    function drawHUD() {
+      const track = TRACKS[selectedTrack];
+      // Sort by effective race position (done cars rank above active ones)
+      const sorted = [...cars].sort((a, b) => {
+        const posA = (a.done ? LAPS + 2 : a.laps) + a.progress;
+        const posB = (b.done ? LAPS + 2 : b.laps) + b.progress;
+        return posB - posA;
+      });
+
+      // Top bar
+      ctx.fillStyle = 'rgba(0,8,18,0.92)'; ctx.fillRect(0, 0, W, 30);
+      ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, 30); ctx.lineTo(W, 30); ctx.stroke();
+      ctx.textBaseline = 'middle';
+
+      // Race timer (left) and track name + leading lap (right)
+      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'left';
+      ctx.fillText('TIME  ' + formatTime(raceTime), 10, 15);
+      ctx.fillStyle = track.col; ctx.font = '20px Courier New'; ctx.textAlign = 'right';
+      ctx.fillText(track.name + '  L' + (Math.min(sorted[0].laps + 1, LAPS)) + '/' + LAPS, W - 10, 15);
+
+      // Per-car standings in the centre of the top bar
+      sorted.forEach((car, i) => {
+        const x = W / 2 - 155 + i * 106;
+        ctx.fillStyle = car.color; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText((i + 1) + '. ' + car.label, x, 10);
+        ctx.font = '16px Courier New';
+        ctx.fillStyle = car.done ? COLORS.ui : COLORS.wh;
+        ctx.fillText(car.done ? '✓ DONE' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS, x, 22);
+      });
+
+      // Speedometer bars along the bottom, one per human player
+      cars.filter(c => !c.isAI).forEach(car => {
+        const barW = 70, barH = 5;
+        const barX = 10 + (car.id * 84), barY = H - 16;
+        const speedPercent = Math.abs(car.speed) / MAX_SPEED;
+        ctx.fillStyle = '#001520'; ctx.fillRect(barX, barY, barW, barH);
+        // Bar colour shifts from player colour → yellow → red as speed increases
+        ctx.fillStyle = speedPercent > 0.8 ? '#ff4444' : speedPercent > 0.5 ? '#ffee00' : car.color;
+        ctx.fillRect(barX, barY, barW * speedPercent, barH);
+        ctx.strokeStyle = car.color + '44'; ctx.lineWidth = 0.8; ctx.strokeRect(barX, barY, barW, barH);
+        ctx.fillStyle = car.color; ctx.font = '14px Courier New'; ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(car.label + '  ' + Math.abs(Math.round(car.speed)), barX, barY - 1);
+        ctx.textBaseline = 'alphabetic';
+      });
+    }
+
+    /** Draws a styled button with active/hover visual states. */
+    function drawBtn(label, x, y, w, h, isActive, isHovered) {
+      ctx.save();
+      ctx.fillStyle   = isActive ? COLORS.ui + '33' : isHovered ? COLORS.ui + '18' : '#001820';
+      ctx.strokeStyle = isActive ? COLORS.ui : isHovered ? COLORS.ui + '88' : '#004433';
+      ctx.lineWidth = isActive ? 2 : 1;
+      if (isActive || isHovered) {
+        ctx.shadowColor = isActive ? COLORS.ui : COLORS.ui + '66';
+        ctx.shadowBlur  = isActive ? 10 : 4;
+      }
+      ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); ctx.shadowBlur = 0;
+      ctx.fillStyle = isActive ? COLORS.ui : isHovered ? COLORS.wh : COLORS.muted;
+      ctx.font = (isActive ? 'bold ' : '') + ' 20px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, x + w / 2, y + h / 2);
+      ctx.restore();
+    }
+
+    /** Draws a thumbnail preview of a track layout (used on the track selection screen). */
+    function miniTrack(track, centerX, centerY, size, isActive) {
+      const pts = track.pts;
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const trackW = maxX - minX, trackH = maxY - minY;
+      // Uniform scale so the whole track fits inside the preview box
+      const scale   = (size - 20) / Math.max(trackW, trackH, 1);
+      const offsetX = -(minX + trackW / 2) * scale;
+      const offsetY = -(minY + trackH / 2) * scale;
+      ctx.save(); ctx.translate(centerX, centerY);
+      if (isActive) { ctx.shadowColor = track.col; ctx.shadowBlur = 12; }
+      ctx.strokeStyle = isActive ? track.col : '#1a4055';
+      ctx.lineWidth = isActive ? 3 : 1.5; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        i === 0
+          ? ctx.moveTo(p[0] * scale + offsetX, p[1] * scale + offsetY)
+          : ctx.lineTo(p[0] * scale + offsetX, p[1] * scale + offsetY);
+      });
+      ctx.closePath(); ctx.stroke(); ctx.shadowBlur = 0;
+      // Small start/finish line indicator perpendicular to the first segment
+      const p0 = pts[0];
+      const sfAngle = Math.atan2(pts[1][1] - p0[1], pts[1][0] - p0[0]) + Math.PI / 2;
+      ctx.strokeStyle = isActive ? '#ffffff' : '#334455'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(p0[0] * scale + offsetX + Math.cos(sfAngle) * 6, p0[1] * scale + offsetY + Math.sin(sfAngle) * 6);
+      ctx.lineTo(p0[0] * scale + offsetX - Math.cos(sfAngle) * 6, p0[1] * scale + offsetY - Math.sin(sfAngle) * 6);
+      ctx.stroke(); ctx.restore();
+    }
+
+    // ── SCREENS ───────────────────────────────────────
+
+    function drawStart() {
+      drawBg(); titlePulse += 0.04;
+      // Faint ghost of the selected track as a background texture
+      ctx.save(); ctx.globalAlpha = 0.07;
+      drawTrack(TRACKS[selectedTrack], 1); ctx.restore();
+
+      ctx.textBaseline = 'alphabetic';
+
+      // Pulsing neon title
+      const glow = 18 + Math.sin(titlePulse) * 8;
+      ctx.textAlign = 'center'; ctx.shadowColor = COLORS.ui; ctx.shadowBlur = glow;
+      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 48px Courier New';
+      ctx.fillText('MICRO RACERS', W / 2, 66); ctx.shadowBlur = 0;
+
+      // ── Player count selector ──
+      ctx.fillStyle = COLORS.wh; ctx.font = '20px Courier New'; ctx.textAlign = 'center';
+      ctx.fillText('NUMBER OF PLAYERS', W / 2, 120);
+      const playerOptions = [{ n: 1, l: '1 PLAYER' }, { n: 2, l: '2 PLAYERS' }, { n: 4, l: '4 PLAYERS' }];
+      const btnW = 256, btnH = 68, btnGap = 28;
+      const btnStartX = (W - (3 * btnW + 2 * btnGap)) / 2;
+      playerOptions.forEach((opt, i) => {
+        const bx = btnStartX + i * (btnW + btnGap), by = 144;
+        const isActive  = numPlayers === opt.n;
+        const isHovered = inBox(mouse.x, mouse.y, bx, by, btnW, btnH);
+        drawBtn(opt.l, bx, by, btnW, btnH, isActive, isHovered);
+        if (mouse.click && isHovered) numPlayers = opt.n;
+      });
+
+      // ── Track selector cards ──
+      ctx.fillStyle = COLORS.wh; ctx.font = '20px Courier New';
+      ctx.fillText('SELECT TRACK', W / 2, 260);
+      const cardW = 188, cardH = 144, cardGap = 14;
+      const totalCardsW = 3 * cardW + 2 * cardGap;
+      const cardStartX  = (W - totalCardsW) / 2;
+      TRACKS.forEach((track, i) => {
+        const cx = cardStartX + i * (cardW + cardGap), cy = 280;
+        const isActive  = selectedTrack === i;
+        const isHovered = inBox(mouse.x, mouse.y, cx, cy, cardW, cardH);
+        ctx.fillStyle   = isActive ? track.col + '22' : isHovered ? '#001c2e' : '#000e1a';
+        ctx.strokeStyle = isActive ? track.col : isHovered ? '#224433' : '#002230';
+        ctx.lineWidth   = isActive ? 2 : 1;
+        if (isActive) { ctx.shadowColor = track.col; ctx.shadowBlur = 10; }
+        ctx.fillRect(cx, cy, cardW, cardH); ctx.strokeRect(cx, cy, cardW, cardH); ctx.shadowBlur = 0;
+        miniTrack(track, cx + cardW / 2, cy + cardH / 2 - 10, cardW - 20, isActive);
+        ctx.textAlign   = 'center';
+        ctx.fillStyle   = isActive ? track.col : isHovered ? COLORS.wh : '#336655';
+        ctx.font        = (isActive ? 'bold ' : '') + ' 20px Courier New';
+        ctx.fillText(track.name, cx + cardW / 2, cy + cardH - 22);
+        ctx.fillStyle = isActive ? COLORS.wh : '#334444'; ctx.font = '8px Courier New';
+        ctx.fillText(track.sub, cx + cardW / 2, cy + cardH - 10);
+        if (mouse.click && isHovered) selectedTrack = i;
+      });
+
+      // ── START RACE button ──
+      const startBtnW = 420, startBtnH = 96;
+      const startBtnX = (W - startBtnW) / 2, startBtnY = 868;
+      const startHovered = inBox(mouse.x, mouse.y, startBtnX, startBtnY, startBtnW, startBtnH);
+      const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
+      ctx.shadowColor = COLORS.ui; ctx.shadowBlur = startHovered ? 30 : 12 * pulse;
+      ctx.fillStyle   = startHovered ? COLORS.ui : '#002a18';
+      ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 2;
+      ctx.fillRect(startBtnX, startBtnY, startBtnW, startBtnH);
+      ctx.strokeRect(startBtnX, startBtnY, startBtnW, startBtnH); ctx.shadowBlur = 0;
+      ctx.fillStyle = startHovered ? COLORS.bg : COLORS.ui;
+      ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('▶  START RACE', startBtnX + startBtnW / 2, startBtnY + startBtnH / 2);
+      ctx.textBaseline = 'alphabetic';
+      if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
+
+      // ── Footer: keyboard reference ──
+      ctx.fillStyle = 'rgba(0,10,20,0.9)'; ctx.fillRect(0, H - 58, W, 58);
+      ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, H - 58); ctx.lineTo(W, H - 58); ctx.stroke();
+      ctx.fillStyle = '#003828'; ctx.font = '16px Courier New'; ctx.textAlign = 'center';
+      ctx.fillText('KEYBOARD — ALL PLAYERS SHARE ONE KEYBOARD', W / 2, H - 44);
+      const ctrlGuide = [
+        { l: 'P1', k: '↑  ↓  ←  →' }, { l: 'P2', k: 'W  A  S  D' },
+        { l: 'P3', k: 'I  J  K  L' }, { l: 'P4', k: 'NUM 8 4 2 6' },
+      ];
+      ctrlGuide.forEach((c, i) => {
+        const x = 80 + i * 166;
+        ctx.fillStyle = COLORS.pc[i]; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText(c.l, x, H - 54);
+        ctx.fillStyle = COLORS.wh; ctx.font = '18px Courier New';
+        ctx.fillText(c.k, x, H - 26);
+      });
+    }
+
+    function drawCountdown() {
+      ctx.fillStyle = 'rgba(0,8,18,0.50)'; ctx.fillRect(0, 0, W, H);
+      const label = countdownNum > 0 ? String(countdownNum) : 'GO!';
+      // Number scales in from large to normal over each one-second tick
+      const progress = 1 - countdownTime;
+      const scale = 0.7 + 0.3 * progress;
+      const alpha = Math.min(1, progress * 2);
+      ctx.save(); ctx.globalAlpha = alpha;
+      ctx.translate(W / 2, H / 2); ctx.scale(scale, scale);
+      ctx.fillStyle   = countdownNum > 0 ? COLORS.wh : COLORS.ui;
+      ctx.shadowColor = countdownNum > 0 ? COLORS.wh : COLORS.ui; ctx.shadowBlur = 80;
+      ctx.font = 'bold 140px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, 0, 0); ctx.shadowBlur = 0; ctx.restore();
+      ctx.fillStyle = '#334455'; ctx.font = '20px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      if (countdownNum > 0) ctx.fillText('GET READY  ·  ' + LAPS + ' LAPS', W / 2, H / 2 + 90);
+    }
+
+    function drawResults() {
+      drawBg(); drawTrack(TRACKS[selectedTrack], 0.18); drawParticles();
+      ctx.fillStyle = 'rgba(0,6,14,0.92)'; ctx.fillRect(0, 0, W, H);
+      const track = TRACKS[selectedTrack];
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 22;
+      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 38px Courier New';
+      ctx.fillText('RACE COMPLETE', W / 2, 70); ctx.shadowBlur = 0;
+      ctx.fillStyle = track.col; ctx.font = '18px Courier New';
+      ctx.fillText(track.name + '  ·  ' + track.sub + '  ·  ' + LAPS + ' LAPS', W / 2, 92);
+      ctx.strokeStyle = '#002530'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(50, 102); ctx.lineTo(W - 50, 102); ctx.stroke();
+
+      // Table headers
+      const tableX = W / 2 - 270;
+      ctx.textAlign = 'left'; ctx.fillStyle = '#004433'; ctx.font = '16px Courier New';
+      ['POS', 'DRIVER', 'FINISH TIME', 'BEST LAP', 'PROGRESS'].forEach((header, i) => {
+        ctx.fillText(header, tableX + [0, 62, 196, 330, 430][i], 120);
+      });
+      ctx.strokeStyle = '#003322'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tableX, 126); ctx.lineTo(W / 2 + 270, 126); ctx.stroke();
+
+      // Sort: finishers first (ordered by finish time via finishOrder), then DNFs by progress
+      const sorted = [...cars].sort((a, b) => {
+        if (a.done !== b.done) return a.done ? -1 : 1;
+        return (b.laps + b.progress) - (a.laps + a.progress);
+      });
+      const medals = ['1ST', '2ND', '3RD', '4TH'];
+      sorted.forEach((car, i) => {
+        const rowY     = 148 + i * 74;
+        const isWinner = i === 0;
+        // Highlight the winner row with a coloured background panel
+        if (isWinner) {
+          ctx.fillStyle   = car.color + '18'; ctx.fillRect(tableX - 8, rowY - 14, 556, 52);
+          ctx.strokeStyle = car.color + '44'; ctx.lineWidth = 1; ctx.strokeRect(tableX - 8, rowY - 14, 556, 52);
+        }
+        ctx.fillStyle = car.color; ctx.font = (isWinner ? 'bold 28' : '24') + 'px Courier New';
+        ctx.textAlign = 'center'; ctx.fillText(medals[i], tableX + 24, rowY + 4);
+        ctx.textAlign = 'left'; ctx.fillStyle = car.color;
+        ctx.font = (isWinner ? 'bold 36' : '26') + 'px Courier New';
+        ctx.fillText(car.label, tableX + 62, rowY + 4);
+        ctx.fillStyle = '#334444'; ctx.font = '14px Courier New';
+        ctx.fillText(car.isAI ? 'AI' : 'HUMAN', tableX + 62, rowY + 16);
+        ctx.font = (isWinner ? 'bold 26' : '22') + 'px Courier New';
+        ctx.fillStyle = car.done ? COLORS.wh : '#445566';
+        ctx.fillText(car.done ? formatTime(car.finishTime) : 'DNF — L' + (car.laps + 1) + '/' + LAPS, tableX + 196, rowY + 4);
+        ctx.fillStyle = '#668877'; ctx.font = '20px Courier New';
+        ctx.fillText(car.bestLap < Infinity ? formatTime(car.bestLap) : '—', tableX + 330, rowY + 4);
+
+        // Progress bar showing total laps completed (divided into per-lap segments)
+        const barW = 196, barH = 8;
+        const barX = tableX + 430, barY = rowY - 4;
+        const progressPct = Math.min(1, (car.laps + car.progress) / LAPS);
+        ctx.fillStyle = '#001520'; ctx.fillRect(barX, barY, barW, barH);
+        const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+        grad.addColorStop(0, car.color + '88'); grad.addColorStop(1, car.color);
+        ctx.fillStyle = grad; ctx.fillRect(barX, barY, barW * progressPct, barH);
+        for (let l = 1; l < LAPS; l++) {
+          ctx.fillStyle = '#002535';
+          ctx.fillRect(barX + barW / LAPS * l - .5, barY, 1, barH);
+        }
+        ctx.strokeStyle = car.color + '55'; ctx.lineWidth = 1; ctx.strokeRect(barX, barY, barW, barH);
+        ctx.fillStyle = car.color + '88'; ctx.font = '14px Courier New'; ctx.textAlign = 'left';
+        ctx.fillText(Math.round(progressPct * 100) + '%', barX + barW * progressPct + 3, barY + barH - 1);
+      });
+
+      // Bottom action buttons
+      const resultBtns = [
+        { l: '▶  RACE AGAIN',   x: W / 2 - 220, fn: () => { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; } },
+        { l: '◀  CHANGE TRACK', x: W / 2 + 14,  fn: () => { screen = 'start'; } },
+      ];
+      const btnsReady = resultsCooldown <= 0;
+      ctx.save();
+      ctx.globalAlpha = btnsReady ? 1 : 0.35;
+      resultBtns.forEach(btn => {
+        const bw = 198, bh = 40, by = H - 60;
+        const isHovered = btnsReady && inBox(mouse.x, mouse.y, btn.x, by, bw, bh);
+        ctx.fillStyle   = isHovered ? COLORS.ui : '#001c2a';
+        ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
+        if (isHovered) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 12; }
+        ctx.fillRect(btn.x, by, bw, bh); ctx.strokeRect(btn.x, by, bw, bh); ctx.shadowBlur = 0;
+        ctx.fillStyle = isHovered ? COLORS.bg : COLORS.ui;
+        ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(btn.l, btn.x + bw / 2, by + bh / 2);
+      });
+      ctx.restore();
+      ctx.fillStyle = '#223344'; ctx.font = '16px Courier New'; ctx.textAlign = 'center';
+      ctx.fillText('TOTAL ELAPSED  ' + formatTime(raceTime), W / 2, H - 8);
+    }
+
+    // ── MAIN LOOP ─────────────────────────────────────
+    let lastTimestamp = 0;
+    function loop(timestamp) {
+      // Cap delta time to 50 ms to avoid a physics spiral-of-death when the tab loses focus
+      const dt = Math.min((timestamp - lastTimestamp) / 1000, 0.05);
+      lastTimestamp = timestamp;
+      ctx.clearRect(0, 0, W, H);
+
+      if (screen === 'start') {
+        drawStart();
+
+      } else if (screen === 'countdown') {
+        countdownTime += dt;
+        if (countdownTime >= 1) { countdownTime = 0; countdownNum--; }
+        if (countdownNum < 0) screen = 'race';
+        updateCamera(dt);
+        drawBg();
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+        ctx.transform(ISO_SCALE, 0.5 * ISO_SCALE, -ISO_SCALE, 0.5 * ISO_SCALE, 0, 0);
+        ctx.scale(camera.zoom, camera.zoom);
+        ctx.translate(-camera.x, -camera.y);
+        drawTrack(TRACKS[selectedTrack]);
+        drawParticles();
+        cars.forEach(c => drawCar(c, false));
+        ctx.restore();
+        drawCarLabels();
+        drawCountdown();
+
+      } else if (screen === 'race') {
+        raceTime += dt;
+        cars.forEach(c => updateCar(c, dt));
+        updateParticles(dt);
+        updateCamera(dt);
+        // Switch to results when all humans finish OR all AI finish (player is last)
+        const aiCars = cars.filter(c => c.isAI);
+        const humansDone = cars.filter(c => !c.isAI).every(c => c.done);
+        const aiAllDone  = aiCars.length > 0 && aiCars.every(c => c.done);
+        if (humansDone || aiAllDone) {
+          // Mark any still-racing cars as DNF
+          cars.filter(c => !c.done).forEach(c => { c.done = true; c.finishTime = raceTime; });
+          resultsCooldown = 1.5;
+          screen = 'results';
+        } else {
+          drawBg();
+          ctx.save();
+          ctx.translate(W / 2, H / 2);
+          ctx.transform(ISO_SCALE, 0.5 * ISO_SCALE, -ISO_SCALE, 0.5 * ISO_SCALE, 0, 0);
+          ctx.scale(camera.zoom, camera.zoom);
+          ctx.translate(-camera.x, -camera.y);
+          drawTrack(TRACKS[selectedTrack]);
+          drawParticles();
+          cars.forEach(c => drawCar(c, false));
+          ctx.restore();
+          drawCarLabels();
+          drawHUD();
+        }
+
+      } else if (screen === 'results') {
+        const wasWaiting = resultsCooldown > 0;
+        resultsCooldown = Math.max(0, resultsCooldown - dt);
+        if (wasWaiting && resultsCooldown <= 0) mouse.click = false; // discard stale clicks
+        // Handle button clicks before drawing so no mid-draw state changes occur
+        if (resultsCooldown <= 0 && mouse.click) {
+          const bw = 198, bh = 40, by = H - 60;
+          if      (inBox(mouse.x, mouse.y, W / 2 - 220, by, bw, bh)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
+          else if (inBox(mouse.x, mouse.y, W / 2 + 14,  by, bw, bh)) { screen = 'start'; }
+        }
+        if (screen === 'results') { updateParticles(dt); drawResults(); }
+      }
+
+      mouse.click = false;  // consume the click so it only fires once per frame
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+
+</html>
