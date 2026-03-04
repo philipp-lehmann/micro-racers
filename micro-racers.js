@@ -227,6 +227,15 @@ document.addEventListener('keydown', e => {
       initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown';
     }
   }
+
+  if (screen === 'race' && cars.length && cars.filter(c => !c.isAI).every(c => c.done || c.dnf)) {
+    // All human players are out — any retire key skips the countdown and jumps to results
+    if (CONTROLS.some(c => e.key === c.give)) {
+      cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
+      resultsCooldown = 0;
+      screen = 'results';
+    }
+  }
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
