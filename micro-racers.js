@@ -856,10 +856,24 @@ function drawStart() {
     { label: 'LAPS',    value: LAPS       + (LAPS       === 1 ? ' LAP'     : ' LAPS')    },
   ];
 
+  const playerCounts = [1, 2, 3, 4];
   rowDefs.forEach((row, i) => {
     const ry  = 280 + i * 108;
     const rcy = ry + ROW_H / 2;
-    const sel = menuRow === i;
+    const hovered = inBox(mouse.x, mouse.y, ROW_X, ry, ROW_W, ROW_H);
+    const sel = menuRow === i || hovered;
+    if (hovered && mouse.click) {
+      menuRow = i;
+      const dir = mouse.x < ROW_X + ROW_W / 2 ? -1 : 1;
+      if (i === 0) {
+        const idx = playerCounts.indexOf(numPlayers);
+        numPlayers = playerCounts[(idx + dir + playerCounts.length) % playerCounts.length];
+      } else if (i === 1) {
+        selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
+      } else {
+        LAPS = Math.max(1, Math.min(9, LAPS + dir));
+      }
+    }
 
     ctx.save();
     ctx.globalAlpha = sel ? 1 : 0.9;
