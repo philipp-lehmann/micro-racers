@@ -337,53 +337,7 @@ let allOutAt            = -1; // raceTime when all cars became done or dnf
 const ISO_SCALE = Math.SQRT1_2;  // cos45 = sin45 = 1/√2
 let camera = { x: 800, y: 570, zoom: 0.8 };
 
-// ── PHYSICS CONSTANTS ─────────────────────────────
-const MAX_SPEED   = 220;  // top forward speed (px/s)
-const MAX_REVERSE = 65;   // top reverse speed (px/s)
-const ACCEL       = 210;  // forward acceleration (px/s²)
-const BRAKE       = 260;  // braking deceleration (px/s²)
-const FRICTION    = 95;   // passive drag when not on throttle (px/s²)
-const TURN_RATE   = 3.0;  // maximum angular turn rate (rad/s), scaled by speed
-const BOOST_DRAIN  = 0.35; // boost charge consumed per second while active
-const BOOST_REFILL = 0.15; // boost charge restored per second while inactive
-
-// ── CAR FACTORY ───────────────────────────────────
-/**
- * Creates a car object positioned on the starting grid.
- * Cars are staggered in two columns (left/right) and rows (front/back)
- * just behind the start/finish line.
- */
-function makeCar(id, isAI, color) {
-  const track  = TRACKS[selectedTrack];
-  const spline = track.spline;
-  const row    = Math.floor(id / 2);
-  const side   = (id % 2 === 0) ? -1 : 1;  // left or right of centerline
-  const startIdx = (spline.length - row * 6 + spline.length) % spline.length;
-  const nextPt   = spline[(startIdx + 1) % spline.length];
-  const angle    = Math.atan2(nextPt[1] - spline[startIdx][1], nextPt[0] - spline[startIdx][0]);
-  // Perpendicular offset direction so paired cars sit side-by-side
-  const lateralX = Math.cos(angle + Math.PI / 2);
-  const lateralY = Math.sin(angle + Math.PI / 2);
-  const x = spline[startIdx][0] + lateralX * side * 17;
-  const y = spline[startIdx][1] + lateralY * side * 17;
-  return {
-    id, isAI, color,
-    x, y, angle,
-    speed: 0, steering: 0, throttle: 0,
-    laps: 0,
-    progress:     trackProgress(x, y, track),
-    lastProgress: 0,
-    canCountLap:  false,   // must cross halfway before the finish line counts
-    aiTarget:     (startIdx + 10) % spline.length,  // next waypoint for the AI
-    onTrack:      true,
-    done: false, dnf: false, finishTime: 0,
-    label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
-    boostCharge: 0.5, isBoosting: false,
-    skidTimer: 0, honkCooldown: 0,
-    lapStart: 0, bestLap: Infinity,
-  };
-}
-
+// (physics constants, CAR_PRESETS, makeCar → cars.js)
 function initRace() {
   cars = []; finishOrder = []; raceTime = 0; particles = [];
   allHumansFinishedAt = -1; allOutAt = -1;
@@ -422,164 +376,8 @@ function spawnHonk(x, y, color) {
   particles.push({ x, y, life: 0.65, maxLife: 0.65, type: 'honk', color });
 }
 
-// ── CAR PHYSICS ───────────────────────────────────
+// (updateCar, CAR_RADIUS, resolveCarCollisions → cars.js)
 
-/** Advances a single car's physics and AI/input state by dt seconds. */
-function updateCar(car, dt) {
-  if (car.done || car.dnf) return;
-  const track = TRACKS[selectedTrack];
-
-  // ── Input ──────────────────────────────────────
-  if (car.isAI) {
-    // Steer toward the next waypoint on the spline centerline
-    const spline = track.spline;
-    const target = spline[car.aiTarget];
-    const dx = target[0] - car.x, dy = target[1] - car.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 40) car.aiTarget = (car.aiTarget + 4) % spline.length;
-    let angleDiff = Math.atan2(dy, dx) - car.angle;
-    // Normalize to [-π, π]
-    while (angleDiff >  Math.PI) angleDiff -= Math.PI * 2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-    car.steering = Math.max(-1, Math.min(1, angleDiff * 3));
-    // Back off throttle when turning sharply to stay on the racing line
-    car.throttle = Math.abs(angleDiff) > 0.9 ? 0.55 : 0.92;
-  } else {
-    const ctrl = CONTROLS[car.id];
-    car.throttle = keys[ctrl.up] ? 1 : (keys[ctrl.dn] ? -1 : 0);
-    car.steering = keys[ctrl.lt] ? -1 : (keys[ctrl.rt] ? 1 : 0);
-    // Give up — retire from the race
-    if (keys[ctrl.give]) {
-      car.dnf = true;
-      spawnBurst(car.x, car.y, car.color);
-      return;
-    }
-    // Honk / beacon
-    if (car.honkCooldown > 0) car.honkCooldown -= dt;
-    if (keys[ctrl.honk] && car.honkCooldown <= 0) {
-      car.honkCooldown = 0.5;
-      spawnHonk(car.x, car.y, car.color);
-    }
-    // Boost
-    car.isBoosting = keys[ctrl.boost] && car.boostCharge > 0;
-    if (car.isBoosting) {
-      car.boostCharge = Math.max(0, car.boostCharge - BOOST_DRAIN * dt);
-    } else {
-      car.boostCharge = Math.min(1, car.boostCharge + BOOST_REFILL * dt);
-    }
-  }
-
-  // ── Speed update ───────────────────────────────
-  const topSpeed = car.onTrack ? (car.isBoosting ? MAX_SPEED * 1.3 : MAX_SPEED) : 90;
-  if (car.throttle > 0) {
-    car.speed = Math.min(car.speed + ACCEL * car.throttle * dt, topSpeed);
-  } else if (car.throttle < 0) {
-    // Brake first; only start reversing once fully stopped
-    if (car.speed > 0) car.speed = Math.max(0, car.speed - BRAKE * dt);
-    else               car.speed = Math.max(-MAX_REVERSE, car.speed - ACCEL * .4 * dt);
-  } else {
-    // Passive friction coasts the car to a stop
-    const frictionDelta = FRICTION * dt;
-    car.speed = Math.abs(car.speed) < frictionDelta ? 0 : car.speed - Math.sign(car.speed) * frictionDelta;
-  }
-
-  // ── Steering ───────────────────────────────────
-  // Turn rate scales with speed so the car can't pirouette when almost stationary
-  const speedFactor = Math.min(1, Math.abs(car.speed) / 60);
-  car.angle += car.steering * TURN_RATE * speedFactor * dt;
-
-  // ── Position ───────────────────────────────────
-  car.x += Math.cos(car.angle) * car.speed * dt;
-  car.y += Math.sin(car.angle) * car.speed * dt;
-  car.x = Math.max(6, Math.min(W - 6, car.x));
-  car.y = Math.max(6, Math.min(H - 6, car.y));
-
-  // ── Off-track detection ────────────────────────
-  const { dist: trackDist, width: localWidth } = nearestTrackPoint(car.x, car.y, track);
-  car.onTrack = trackDist < localWidth / 2 + 3;
-  if (!car.onTrack) {
-    // Exponential speed decay: ~85% speed retained per second of off-track driving
-    car.speed *= Math.pow(0.85, 60 * dt);
-    if (Math.abs(car.speed) > 10) spawnSkid(car);
-  }
-
-  // ── Skid marks when cornering hard at speed ────
-  if (Math.abs(car.steering) > 0.7 && Math.abs(car.speed) > 100) spawnSkid(car);
-  if (car.skidTimer > 0) car.skidTimer -= dt;
-
-  // ── Lap counting ──────────────────────────────
-  car.lastProgress = car.progress;
-  car.progress = trackProgress(car.x, car.y, track);
-
-  // 1. Set the flag once the car actually crosses the halfway point from below
-  if (car.progress > 0.5 && car.lastProgress < 0.5) car.canCountLap = true;
-
-  // 2. ONLY use this block to handle lap increments
-  if (car.canCountLap && car.lastProgress > 0.86 && car.progress < 0.14 && car.speed > 8) {
-    const lapTime = raceTime - car.lapStart;
-    if (lapTime < car.bestLap) car.bestLap = lapTime;
-    car.lapStart = raceTime;
-    car.laps++;
-    // Reset flag so they must loop all the way around again
-    car.canCountLap = false;
-
-    if (car.laps >= LAPS && !car.done) {
-      car.done = true;
-      car.finishTime = raceTime;
-      finishOrder.push(car.id);
-      spawnBurst(car.x, car.y, car.color);
-    }
-  }
-
-  // 3. Penalise reversing across the start/finish line
-  if (car.lastProgress < 0.14 && car.progress > 0.86 && car.speed < -5) {
-    car.laps = Math.max(0, car.laps - 1);
-  }
-}
-
-const CAR_RADIUS = 14;  // collision circle radius (cars are 22×12 px rectangles)
-
-/** Detects and resolves car-car collisions for all active cars. */
-function resolveCarCollisions() {
-  for (let i = 0; i < cars.length; i++) {
-    const a = cars[i];
-    if (a.done || a.dnf) continue;
-    for (let j = i + 1; j < cars.length; j++) {
-      const b = cars[j];
-      if (b.done || b.dnf) continue;
-
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist >= CAR_RADIUS * 2 || dist < 0.01) continue;
-
-      // Push cars apart so they no longer overlap
-      const overlap = CAR_RADIUS * 2 - dist;
-      const nx = dx / dist, ny = dy / dist;
-      a.x -= nx * overlap * 0.5;
-      a.y -= ny * overlap * 0.5;
-      b.x += nx * overlap * 0.5;
-      b.y += ny * overlap * 0.5;
-
-      // Velocity component along the collision normal for each car
-      const aN = a.speed * (Math.cos(a.angle) * nx + Math.sin(a.angle) * ny);
-      const bN = b.speed * (Math.cos(b.angle) * nx + Math.sin(b.angle) * ny);
-      if (aN - bN <= 0) continue;  // already separating — no impulse needed
-
-      // Elastic impulse (restitution 0.7 — slightly inelastic for a solid feel)
-      const imp = (aN - bN) * 0.85;
-
-      // Project impulse back onto each car's own heading axis
-      a.speed -= imp * (Math.cos(a.angle) * nx + Math.sin(a.angle) * ny);
-      b.speed += imp * (Math.cos(b.angle) * nx + Math.sin(b.angle) * ny);
-      a.speed = Math.max(-MAX_REVERSE, Math.min(MAX_SPEED, a.speed));
-      b.speed = Math.max(-MAX_REVERSE, Math.min(MAX_SPEED, b.speed));
-
-      // Trigger skid marks on both cars
-      a.skidTimer = 0; spawnSkid(a);
-      b.skidTimer = 0; spawnSkid(b);
-    }
-  }
-}
 
 function updateParticles(dt) {
   particles.forEach(p => {
@@ -675,45 +473,7 @@ function drawParticles() {
   });
 }
 
-function drawCar(car, withLabel = true) {
-  const carWidth = 22, carHeight = 12;
-  ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.angle);
-  // Body outline; human cars glow brighter than AI cars
-  ctx.shadowColor = car.isBoosting ? '#ffffff' : car.color;
-  ctx.shadowBlur = car.isBoosting ? 28 : (car.onTrack ? 14 : 4);
-  ctx.strokeStyle = car.color; ctx.lineWidth = 1.8;
-  ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
-  // Windscreen area (semi-transparent fill at the rear of the body)
-  ctx.fillStyle = car.color + '44';
-  ctx.fillRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
-  ctx.strokeStyle = car.color; ctx.lineWidth = 0.8;
-  ctx.strokeRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
-  // Front headlight dot
-  ctx.fillStyle = car.color;
-  ctx.beginPath(); ctx.arc(carWidth / 2 - 1, 0, 2.5, 0, Math.PI * 2); ctx.fill();
-  // Speed-streak lines — longer and brighter when boosting
-  if (!car.isAI && (Math.abs(car.speed) > 140 || car.isBoosting)) {
-    const streakLen = car.isBoosting ? 22 : 10;
-    ctx.globalAlpha = car.isBoosting ? 0.7 : 0.25;
-    ctx.strokeStyle = car.isBoosting ? '#ffffff' : car.color; ctx.lineWidth = 1;
-    [-3, 0, 3].forEach(offset => {
-      ctx.beginPath();
-      ctx.moveTo(-carWidth / 2 - 2, offset);
-      ctx.lineTo(-carWidth / 2 - streakLen, offset);
-      ctx.stroke();
-    });
-    ctx.globalAlpha = 1;
-  }
-  ctx.restore();
-  if (withLabel) {
-    // Car label drawn in world space just below the car body
-    ctx.save();
-    ctx.font = '14px Courier New'; ctx.fillStyle = car.color;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillText(car.label, car.x, car.y + carHeight / 2 + 4);
-    ctx.restore();
-  }
-}
+// (drawCar → cars.js)
 
 /** Converts a world-space point to screen-space under the current iso camera. */
 function worldToScreen(wx, wy) {
@@ -1121,8 +881,8 @@ function drawResults() {
 
   // ── Buttons ─────────────────────────────────────
   const resultBtns = [
-    { l: '◀  CHANGE TRACK', x: W / 2 + 14  },
-    { l: 'RACE AGAIN ▶',   x: W / 2 - 220 },
+    { l: 'CHANGE TRACK ⤨', x: W / 2 - 220 },
+    { l: 'RACE AGAIN ▶',   x: W / 2 + 14  },
   ];
   const btnsReady = resultsCooldown <= 0;
   ctx.save(); ctx.globalAlpha = btnsReady ? 1 : 0.35;
