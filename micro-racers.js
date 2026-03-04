@@ -19,12 +19,12 @@ const COLORS = {
   grid:  '#001628',  // subtle grid lines
   trk:   '#001a28',  // track surface fill
   ui:    '#00ff88',  // primary UI green
-  dim:   '#003322',  // dimmed green
+  dim:   '#0c6c3f',  // dimmed green
   wh:    '#aaffcc',  // light text
-  muted: '#006655',  // muted / inactive text
+  muted: '#06453b',  // muted / inactive text
   // Player car colors: cyan, red, yellow, purple
   pc: ['#00ffff', '#ff3355', '#ffee00', '#cc44ff'],
-  ai: '#1e3a50',     // AI car color (dark blue-grey)
+  ai: '#005a9f',     // AI car color (dark blue-grey)
 };
 
 // ── SPLINE & GEOMETRY ─────────────────────────────
@@ -733,7 +733,7 @@ function drawStart() {
   });
 
   // ── START RACE button ──
-  const sbW = 420, sbH = 88, sbX = W / 2 - sbW / 2, sbY = 668;
+  const sbW = ROW_W, sbH = ROW_H, sbX = ROW_X, sbY = 668;
   const startHovered = inBox(mouse.x, mouse.y, sbX, sbY, sbW, sbH);
   const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
   ctx.shadowColor = COLORS.ui; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;
@@ -780,7 +780,7 @@ const RES = {
   get tableX() { return W / 2 - this.tableW / 2; },  // 400
   COL: { pos: 0, driver: 90, time: 330, lap: 530, prog: 690 },
   progBarW: 110,
-  rowH:     178,
+  rowH:     120,
   headerY:  108,   // top of the column-label row
   get rowsY()  { return this.headerY + 22; },  // top of first data row
   btnW: 198, btnH: 44,
@@ -846,26 +846,18 @@ function drawResults() {
     ctx.textAlign = 'left';
     ctx.fillStyle = car.color;
     ctx.font = (isWinner ? 'bold 32' : '26') + 'px Courier New';
-    ctx.fillText(car.label, tableX + COL.driver, rowCY - 14);
-    ctx.fillStyle = '#2a4455'; ctx.font = '14px Courier New';
-    ctx.fillText(car.isAI ? 'AI' : 'HUMAN', tableX + COL.driver, rowCY + 14);
+    ctx.fillText(car.label, tableX + COL.driver, rowCY);
 
     // Finish time or status
     const resultText = car.done ? formatTime(car.finishTime) : car.dnf ? 'RETIRED' : 'DNF';
     ctx.fillStyle = car.done ? COLORS.wh : '#445566';
     ctx.font = (isWinner ? 'bold 28' : '22') + 'px Courier New';
-    ctx.fillText(resultText, tableX + COL.time, rowCY - 12);
-    if (car.done) {
-      ctx.fillStyle = '#2a4455'; ctx.font = '14px Courier New';
-      ctx.fillText('FINISH TIME', tableX + COL.time, rowCY + 12);
-    }
+    ctx.fillText(resultText, tableX + COL.time, rowCY);
 
     // Best lap
     const lapText = car.bestLap < Infinity ? formatTime(car.bestLap) : '—';
     ctx.fillStyle = '#668877'; ctx.font = '22px Courier New';
-    ctx.fillText(lapText, tableX + COL.lap, rowCY - 12);
-    ctx.fillStyle = '#2a4455'; ctx.font = '14px Courier New';
-    ctx.fillText('BEST LAP', tableX + COL.lap, rowCY + 12);
+    ctx.fillText(lapText, tableX + COL.lap, rowCY);
 
     // Progress bar
     const barX = tableX + COL.prog;
