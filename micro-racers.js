@@ -25,7 +25,6 @@ const COLORS = {
   muted: '#fcfcfc',  // muted / inactive text
   // Player car colors: cyan, red, yellow, purple
   pc: ['#00ffff', '#ff3355', '#ffee00', '#cc44ff'],
-  ai: '#005a9f',     // AI car color (dark blue-grey)
   danger: '#ff3366', // delete / discard red
 };
 // Button idle-state background: 10% tint of the button's accent colour
@@ -141,6 +140,21 @@ let TRACKS = TRACK_DEFS.map(def => buildTrackObj(def, false));
 // ── USER TRACK PERSISTENCE ─────────────────────────
 const USER_TRACK_COLORS = ['#ff8822','#00ccff','#ff3366','#ffee00','#aa44ff','#bd849c'];
 
+const USER_TRACK_NAMES = [
+  { name: 'KITCHEN COUNTER',   sub: 'MIDNIGHT SPRINT'    },
+  { name: 'BILLIARD TABLE 2',  sub: 'RETURN MATCH'       },
+  { name: 'WORKBENCH',         sub: 'TOOL BELT CIRCUIT'  },
+  { name: 'BATHROOM FLOOR',    sub: 'SLIPPERY CIRCUIT'   },
+  { name: 'BREAKFAST TABLE 2', sub: 'SECOND SERVING'     },
+  { name: 'GARDEN PATH',       sub: 'OUTDOOR LOOP'       },
+  { name: 'WORK DESK 2',       sub: 'OVERTIME LAP'       },
+  { name: 'LIVING ROOM',       sub: 'CARPET CLASSIC'     },
+  { name: 'SANDBOX',           sub: 'DESERT DRIFT'       },
+  { name: 'ROOFTOP',           sub: 'SKYLINE CIRCUIT'    },
+  { name: 'KITCHEN TABLE',     sub: 'CRUMBS & CORNERS'   },
+  { name: 'WORKBENCH 2',       sub: 'SECOND SHIFT'       },
+];
+
 function loadUserTracks() {
   try {
     const defs = JSON.parse(localStorage.getItem('mrUserTracks') || '[]');
@@ -213,6 +227,14 @@ function trackProgress(x, y, track) {
   return (track.cumulativeLengths[nearestSegIdx] + nearestT * segLen) / track.totalLength;
 }
 
+/** Returns a darkened version of a #rrggbb hex colour (factor 0–1). */
+function muteColor(hex, factor = 0.35) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return '#' + [r, g, b].map(v => Math.round(v * factor).toString(16).padStart(2, '0')).join('');
+}
+
 /** Formats elapsed seconds as "M:SS.ms" (e.g. 1:07.43). */
 function formatTime(seconds) {
   const minutes = Math.floor(seconds / 60);
@@ -247,6 +269,7 @@ document.addEventListener('keydown', e => {
     }
     if (e.key === 'Enter' || e.key === ' ') {
       initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown';
+      setMusicMode('beat');
     }
   }
 
@@ -261,7 +284,7 @@ document.addEventListener('keydown', e => {
     if (CONTROLS.some(c => e.key === c.give)) {
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
       resultsCooldown = 0;
-      screen = 'results';
+      screen = 'results'; setMusicMode('results');
     }
   }
 });
@@ -364,7 +387,7 @@ function initRace() {
   cars = []; finishOrder = []; raceTime = 0; particles = [];
   allHumansFinishedAt = -1; allOutAt = -1;
   for (let i = 0; i < 4; i++)
-    cars.push(makeCar(i, i >= numPlayers, i < numPlayers ? COLORS.pc[i] : COLORS.ai));
+    cars.push(makeCar(i, i >= numPlayers, i < numPlayers ? COLORS.pc[i] : muteColor(COLORS.pc[i])));
   camera.x = cars.reduce((s, c) => s + c.x, 0) / cars.length;
   camera.y = cars.reduce((s, c) => s + c.y, 0) / cars.length;
   camera.zoom = 1.25;
@@ -931,7 +954,7 @@ function drawStart() {
   ctx.fillStyle = startHovered ? COLORS.bg : COLORS.primary;
   ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('▶  START RACE', ROW_X + ROW_W / 2, sbY + ROW_H / 2);
-  if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
+  if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
 
   // ── EDIT TRACKS button ──
   const etY = sbY + ROW_H + 8;
@@ -1080,8 +1103,8 @@ function drawResults() {
 
   // ── Buttons ─────────────────────────────────────
   const resultBtns = [
-    { l: '▶  RACE AGAIN',   x: W / 2 - 220 },
     { l: '◀  CHANGE TRACK', x: W / 2 + 14  },
+    { l: 'RACE AGAIN ▶',   x: W / 2 - 220 },
   ];
   const btnsReady = resultsCooldown <= 0;
   ctx.save(); ctx.globalAlpha = btnsReady ? 1 : 0.35;
@@ -1341,7 +1364,13 @@ function drawEditor() {
     if (saveHov && canSave) {
       const userCount = TRACKS.filter(t => t.isUser).length;
       const col = USER_TRACK_COLORS[userCount % USER_TRACK_COLORS.length];
-      const def = { name: 'CUSTOM ' + (userCount + 1), sub: 'USER TRACK', col, pts: [...editPts] };
+      const tpl = USER_TRACK_NAMES[userCount % USER_TRACK_NAMES.length];
+      const lap = Math.floor(userCount / USER_TRACK_NAMES.length);
+      const def = {
+        name: tpl.name + (lap > 0 ? ' ' + (lap + 1) : ''),
+        sub:  tpl.sub,
+        col, pts: [...editPts],
+      };
       TRACKS.push(buildTrackObj(def, true));
       persistUserTracks();
       selectedTrack = TRACKS.length - 1;
@@ -1369,7 +1398,7 @@ function loop(timestamp) {
   } else if (screen === 'countdown') {
     countdownTime += dt;
     if (countdownTime >= 1) { countdownTime = 0; countdownNum--; }
-    if (countdownNum < 0) screen = 'race';
+    if (countdownNum < 0) { screen = 'race'; setMusicMode('race'); }
     updateCamera(dt);
     drawBg();
     ctx.save();
@@ -1409,7 +1438,7 @@ function loop(timestamp) {
       // DNF any cars still on-track (leaves finishTime/done unchanged for real finishers)
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
       resultsCooldown = 1.5;
-      screen = 'results';
+      screen = 'results'; setMusicMode('results');
     } else {
       drawBg();
       ctx.save();
@@ -1432,8 +1461,8 @@ function loop(timestamp) {
     // Handle button clicks before drawing so no mid-draw state changes occur
     if (resultsCooldown <= 0 && mouse.click) {
       const { btnW, btnH, btnY } = RES;
-      if      (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
-      else if (inBox(mouse.x, mouse.y, W / 2 + 14,  btnY, btnW, btnH)) { screen = 'start'; }
+      if      (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
+      else if (inBox(mouse.x, mouse.y, W / 2 + 14,  btnY, btnW, btnH)) { screen = 'start'; setMusicMode('beat'); }
     }
     if (screen === 'results') { updateParticles(dt); drawResults(); }
 
