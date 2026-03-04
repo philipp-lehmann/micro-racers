@@ -119,7 +119,7 @@ function clipEdgeFolds(pts) {
 }
 
 // ── TRACK DATA (pre-computed) ──────────────────────
-const TRACKS = TRACK_DEFS.map(def => {
+function buildTrackObj(def, isUser) {
   const spline = buildSpline(def.pts, 14);
   const edges  = buildEdges(spline);
   // Pre-compute cumulative arc-lengths so trackProgress() can work in O(n) each frame
@@ -130,8 +130,27 @@ const TRACKS = TRACK_DEFS.map(def => {
   // Total perimeter includes the wrap-around closing segment
   const totalLength = cumulativeLengths[cumulativeLengths.length - 1] +
     Math.hypot(spline[0][0] - spline[spline.length - 1][0], spline[0][1] - spline[spline.length - 1][1]);
-  return { ...def, spline, edges, cumulativeLengths, totalLength };
-});
+  return { ...def, spline, edges, cumulativeLengths, totalLength, isUser: !!isUser };
+}
+
+let TRACKS = TRACK_DEFS.map(def => buildTrackObj(def, false));
+
+// ── USER TRACK PERSISTENCE ─────────────────────────
+const USER_TRACK_COLORS = ['#ff8822','#00ccff','#ff3366','#ffee00','#aa44ff','#bd849c'];
+
+function loadUserTracks() {
+  try {
+    const defs = JSON.parse(localStorage.getItem('mrUserTracks') || '[]');
+    defs.forEach(def => TRACKS.push(buildTrackObj(def, true)));
+  } catch {}
+}
+
+function persistUserTracks() {
+  const defs = TRACKS.filter(t => t.isUser).map(({ name, sub, col, pts }) => ({ name, sub, col, pts }));
+  localStorage.setItem('mrUserTracks', JSON.stringify(defs));
+}
+
+loadUserTracks();
 
 // ── GEOMETRY HELPERS ──────────────────────────────
 
@@ -228,6 +247,12 @@ document.addEventListener('keydown', e => {
     }
   }
 
+  if (screen === 'editor') {
+    if (e.key === 'z' || e.key === 'Z') { editPts.pop(); rebuildEditorPreview(); }
+    if (e.key === 'Escape') screen = 'tracks';
+  }
+  if (screen === 'tracks' && e.key === 'Escape') screen = 'start';
+
   if (screen === 'race' && cars.length && cars.filter(c => !c.isAI).every(c => c.done || c.dnf)) {
     // All human players are out — any retire key skips the countdown and jumps to results
     if (CONTROLS.some(c => e.key === c.give)) {
@@ -262,7 +287,7 @@ canvas.addEventListener('click', e => {
 });
 
 // ── GAME STATE ────────────────────────────────────
-let screen        = 'start';  // 'start' | 'countdown' | 'race' | 'results'
+let screen        = 'start';  // 'start' | 'countdown' | 'race' | 'results' | 'tracks' | 'editor'
 let selectedTrack = 0;        // index into TRACKS
 let numPlayers    = 1;        // how many human players (1, 2, or 4)
 let cars          = [];       // all four car objects
@@ -275,6 +300,8 @@ let LAPS          = 1;        // number of laps per race (user-selectable)
 let titlePulse    = 0;        // animation clock for the title-screen glow
 let resultsCooldown = 0;      // seconds before results buttons become clickable
 let menuRow       = 0;        // which start-screen row is selected (0–2)
+let editPts       = [];       // [x, y, w] points being drawn in the editor
+let editPreview   = null;     // compiled track object for live preview (null if < 3 pts)
 // Race-end timing for the three win conditions
 let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
 let allOutAt            = -1; // raceTime when all cars became done or dnf
@@ -761,6 +788,12 @@ function drawHUD() {
 
 // ── SCREENS ───────────────────────────────────────
 
+function rebuildEditorPreview() {
+  editPreview = editPts.length >= 3
+    ? buildTrackObj({ name: '', sub: '', col: USER_TRACK_COLORS[0], pts: editPts }, true)
+    : null;
+}
+
 function drawStart() {
   drawBg(); titlePulse += 0.04;
   const track = TRACKS[selectedTrack];
@@ -863,6 +896,20 @@ function drawStart() {
   ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('▶  START RACE', ROW_X + ROW_W / 2, sbY + ROW_H / 2);
   if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
+
+  // ── EDIT TRACKS button ──
+  const etY = sbY + ROW_H + 8;
+  const etH = 50;
+  const editTracksHovered = inBox(mouse.x, mouse.y, ROW_X, etY, ROW_W, etH);
+  ctx.fillStyle   = editTracksHovered ? COLORS.ui2 : '#001520';
+  ctx.strokeStyle = COLORS.ui2; ctx.lineWidth = 1.5;
+  if (editTracksHovered) { ctx.shadowColor = COLORS.ui2; ctx.shadowBlur = 10; }
+  ctx.fillRect(ROW_X, etY, ROW_W, etH);
+  ctx.strokeRect(ROW_X, etY, ROW_W, etH); ctx.shadowBlur = 0;
+  ctx.fillStyle = editTracksHovered ? COLORS.bg : COLORS.ui2;
+  ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('✎  EDIT TRACKS', ROW_X + ROW_W / 2, etY + etH / 2);
+  if (mouse.click && editTracksHovered) screen = 'tracks';
 
   // ── Footer ──
   ctx.fillStyle = 'rgba(0,10,20,0.92)'; ctx.fillRect(0, H - 62, W, 62);
@@ -1018,6 +1065,260 @@ function drawResults() {
   ctx.fillText('TOTAL ELAPSED  ' + formatTime(raceTime), W / 2, btnY + btnH + 22);
 }
 
+// ── TRACKS SCREEN ─────────────────────────────────
+
+function drawMiniTrackPreview(track, px, py, pw, ph) {
+  const xs = track.spline.map(p => p[0]);
+  const ys = track.spline.map(p => p[1]);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const tw = xmax - xmin || 1, th = ymax - ymin || 1;
+  const scale = Math.min((pw - 16) / tw, (ph - 16) / th);
+  const offX = px + pw / 2 - (xmin + tw / 2) * scale;
+  const offY = py + ph / 2 - (ymin + th / 2) * scale;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(px, py, pw, ph); ctx.clip();
+  ctx.translate(offX, offY); ctx.scale(scale, scale);
+  drawTrack(track, 1);
+  ctx.restore();
+}
+
+function drawTracksScreen() {
+  drawBg();
+  ctx.fillStyle = 'rgba(0,6,14,0.72)'; ctx.fillRect(0, 0, W, H);
+
+  const HDR_H = 70;
+  const PREV_W = 200, PREV_H = 120;
+  const ROW_H  = 134;
+  const LIST_X = 60, LIST_W = W - 120;
+  const LIST_Y = HDR_H + 10;
+  const MAX_ROWS = Math.floor((H - LIST_Y - 10) / ROW_H);
+
+  // ── Header ──
+  ctx.fillStyle = 'rgba(0,8,20,0.95)'; ctx.fillRect(0, 0, W, HDR_H);
+  ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, HDR_H); ctx.lineTo(W, HDR_H); ctx.stroke();
+  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 32px Courier New';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 14;
+  ctx.fillText('TRACKS', LIST_X, HDR_H / 2); ctx.shadowBlur = 0;
+
+  // ✕ close button
+  const closeW = 50, closeH = 50;
+  const closeX = W - closeW - 20, closeY = (HDR_H - closeH) / 2;
+  const closeHov = inBox(mouse.x, mouse.y, closeX, closeY, closeW, closeH);
+  ctx.fillStyle = closeHov ? '#ff3366' : '#001a28';
+  ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+  ctx.fillRect(closeX, closeY, closeW, closeH);
+  ctx.strokeRect(closeX, closeY, closeW, closeH);
+  ctx.fillStyle = closeHov ? '#fff' : '#ff3366';
+  ctx.font = 'bold 22px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('✕', closeX + closeW / 2, closeY + closeH / 2);
+  if (mouse.click && closeHov) { screen = 'start'; return; }
+
+  // ── ADD NEW TRACK button ──
+  const addW = 220, addH = 44;
+  const addX = W - addW - 90, addY = (HDR_H - addH) / 2;
+  const addHov = inBox(mouse.x, mouse.y, addX, addY, addW, addH);
+  ctx.fillStyle = addHov ? COLORS.ui : '#001c2a';
+  ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
+  if (addHov) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 10; }
+  ctx.fillRect(addX, addY, addW, addH);
+  ctx.strokeRect(addX, addY, addW, addH); ctx.shadowBlur = 0;
+  ctx.fillStyle = addHov ? COLORS.bg : COLORS.ui;
+  ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('＋  ADD NEW TRACK', addX + addW / 2, addY + addH / 2);
+  if (mouse.click && addHov) { editPts = []; editPreview = null; screen = 'editor'; return; }
+
+  // ── Track list ──
+  const visible = TRACKS.slice(0, MAX_ROWS);
+  visible.forEach((track, i) => {
+    const ry = LIST_Y + i * ROW_H;
+    const isSel = (selectedTrack === i);
+
+    // Row background
+    ctx.fillStyle = isSel ? track.col + '18' : 'rgba(0,10,24,0.6)';
+    ctx.strokeStyle = isSel ? track.col : '#002030';
+    ctx.lineWidth = isSel ? 2 : 1;
+    ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 4);
+    ctx.strokeRect(LIST_X, ry, LIST_W, ROW_H - 4);
+
+    // Mini track preview
+    const prevX = LIST_X + 8, prevY = ry + (ROW_H - 4 - PREV_H) / 2;
+    ctx.fillStyle = COLORS.trk;
+    ctx.fillRect(prevX, prevY, PREV_W, PREV_H);
+    drawMiniTrackPreview(track, prevX, prevY, PREV_W, PREV_H);
+
+    // Name / subtitle / tag
+    const txtX = LIST_X + PREV_W + 24;
+    const midY = ry + (ROW_H - 4) / 2;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = track.col; ctx.font = 'bold 26px Courier New';
+    ctx.fillText(track.name, txtX, midY - 18);
+    ctx.fillStyle = COLORS.wh; ctx.font = '16px Courier New';
+    ctx.fillText(track.sub, txtX, midY + 8);
+    ctx.fillStyle = track.isUser ? '#00ccff' : '#445566';
+    ctx.font = '14px Courier New';
+    ctx.fillText(track.isUser ? '(CUSTOM)' : '(BUILT-IN)', txtX, midY + 30);
+
+    // Click row to select track
+    if (mouse.click && inBox(mouse.x, mouse.y, LIST_X, ry, LIST_W - 60, ROW_H - 4)) {
+      selectedTrack = i;
+    }
+
+    // Delete button (only for user tracks)
+    const delW = 44, delH = 44;
+    const delX = LIST_X + LIST_W - delW - 10;
+    const delY = ry + (ROW_H - 4 - delH) / 2;
+    if (track.isUser) {
+      const delHov = inBox(mouse.x, mouse.y, delX, delY, delW, delH);
+      ctx.fillStyle = delHov ? '#ff3366' : '#001820';
+      ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+      ctx.fillRect(delX, delY, delW, delH);
+      ctx.strokeRect(delX, delY, delW, delH);
+      ctx.fillStyle = delHov ? '#fff' : '#ff3366';
+      ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
+      if (mouse.click && delHov) {
+        TRACKS.splice(i, 1);
+        persistUserTracks();
+        selectedTrack = Math.min(selectedTrack, TRACKS.length - 1);
+        return;
+      }
+    } else {
+      // Greyed-out placeholder
+      ctx.fillStyle = '#001820'; ctx.strokeStyle = '#002030'; ctx.lineWidth = 1;
+      ctx.fillRect(delX, delY, delW, delH); ctx.strokeRect(delX, delY, delW, delH);
+      ctx.fillStyle = '#223344';
+      ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
+    }
+  });
+
+  if (TRACKS.length > MAX_ROWS) {
+    ctx.fillStyle = '#334455'; ctx.font = '14px Courier New';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('+ ' + (TRACKS.length - MAX_ROWS) + ' more (select with keyboard on start screen)',
+      W / 2, LIST_Y + MAX_ROWS * ROW_H + 12);
+  }
+}
+
+// ── EDITOR SCREEN ──────────────────────────────────
+
+function drawEditor() {
+  drawBg();
+  ctx.fillStyle = 'rgba(0,6,14,0.30)'; ctx.fillRect(0, 0, W, H);
+
+  // Live track preview (top-down, no iso)
+  if (editPreview) {
+    drawTrack(editPreview, 0.85);
+  }
+
+  // Draw placed points and connecting lines
+  if (editPts.length > 0) {
+    // Thin lines between points
+    ctx.save();
+    ctx.strokeStyle = '#00ff8866'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 8]);
+    ctx.beginPath(); ctx.moveTo(editPts[0][0], editPts[0][1]);
+    for (let i = 1; i < editPts.length; i++) ctx.lineTo(editPts[i][0], editPts[i][1]);
+    ctx.stroke();
+    // Dashed closing segment
+    if (editPts.length >= 2) {
+      const last = editPts[editPts.length - 1];
+      ctx.strokeStyle = '#00ff8844';
+      ctx.beginPath(); ctx.moveTo(last[0], last[1]); ctx.lineTo(editPts[0][0], editPts[0][1]); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // Numbered dots
+    editPts.forEach(([x, y], i) => {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.fillStyle = '#000c18'; ctx.fill();
+      ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 11px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(i + 1, x, y);
+      ctx.restore();
+    });
+  }
+
+  // ── Toolbar ──
+  const TB_H = 90;
+  const TB_Y = H - TB_H;
+  ctx.fillStyle = 'rgba(0,6,16,0.92)'; ctx.fillRect(0, TB_Y, W, TB_H);
+  ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, TB_Y); ctx.lineTo(W, TB_Y); ctx.stroke();
+
+  ctx.fillStyle = '#334455'; ctx.font = '15px Courier New';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('CLICK TO ADD POINTS  ·  Z UNDO  ·  ≥3 PTS TO SAVE', 30, TB_Y + TB_H / 2);
+
+  const canSave = editPts.length >= 3;
+  const BTN_W = 130, BTN_H = 48;
+  const discardX = W - BTN_W * 2 - 44, saveX = W - BTN_W - 20;
+  const BTN_Y = TB_Y + (TB_H - BTN_H) / 2;
+
+  // DISCARD button
+  const discardHov = inBox(mouse.x, mouse.y, discardX, BTN_Y, BTN_W, BTN_H);
+  ctx.fillStyle = discardHov ? '#ff3366' : '#001820';
+  ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+  ctx.fillRect(discardX, BTN_Y, BTN_W, BTN_H); ctx.strokeRect(discardX, BTN_Y, BTN_W, BTN_H);
+  ctx.fillStyle = discardHov ? '#fff' : '#ff3366';
+  ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('DISCARD', discardX + BTN_W / 2, BTN_Y + BTN_H / 2);
+
+  // SAVE button
+  ctx.save(); ctx.globalAlpha = canSave ? 1 : 0.35;
+  const saveHov = canSave && inBox(mouse.x, mouse.y, saveX, BTN_Y, BTN_W, BTN_H);
+  ctx.fillStyle = saveHov ? COLORS.ui : '#001c2a';
+  ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
+  if (saveHov) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 10; }
+  ctx.fillRect(saveX, BTN_Y, BTN_W, BTN_H); ctx.strokeRect(saveX, BTN_Y, BTN_W, BTN_H);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = saveHov ? COLORS.bg : COLORS.ui;
+  ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('SAVE', saveX + BTN_W / 2, BTN_Y + BTN_H / 2);
+  ctx.restore();
+
+  // ✕ close (top-right)
+  const cW = 50, cH = 50;
+  const cX = W - cW - 14, cY = 14;
+  const cHov = inBox(mouse.x, mouse.y, cX, cY, cW, cH);
+  ctx.fillStyle = cHov ? '#ff3366' : '#001a28';
+  ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+  ctx.fillRect(cX, cY, cW, cH); ctx.strokeRect(cX, cY, cW, cH);
+  ctx.fillStyle = cHov ? '#fff' : '#ff3366';
+  ctx.font = 'bold 22px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('✕', cX + cW / 2, cY + cH / 2);
+
+  // Point count
+  ctx.fillStyle = editPts.length >= 3 ? COLORS.ui : '#334455';
+  ctx.font = '14px Courier New'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText(editPts.length + ' pts', discardX - 16, TB_Y + TB_H / 2);
+
+  // Handle button clicks — returns true if a UI element consumed the click
+  if (mouse.click) {
+    if (cHov) { screen = 'tracks'; return true; }
+    if (discardHov) { editPts = []; editPreview = null; screen = 'tracks'; return true; }
+    if (saveHov && canSave) {
+      const userCount = TRACKS.filter(t => t.isUser).length;
+      const col = USER_TRACK_COLORS[userCount % USER_TRACK_COLORS.length];
+      const def = { name: 'CUSTOM ' + (userCount + 1), sub: 'USER TRACK', col, pts: [...editPts] };
+      TRACKS.push(buildTrackObj(def, true));
+      persistUserTracks();
+      selectedTrack = TRACKS.length - 1;
+      editPts = []; editPreview = null;
+      screen = 'tracks'; return true;
+    }
+    // Check if click is on a UI element (toolbar or top-right ✕)
+    if (mouse.y >= TB_Y) return true;  // in toolbar
+    if (inBox(mouse.x, mouse.y, cX, cY, cW, cH)) return true;
+  }
+  return false;
+}
+
 // ── MAIN LOOP ─────────────────────────────────────
 let lastTimestamp = 0;
 function loop(timestamp) {
@@ -1099,6 +1400,16 @@ function loop(timestamp) {
       else if (inBox(mouse.x, mouse.y, W / 2 + 14,  btnY, btnW, btnH)) { screen = 'start'; }
     }
     if (screen === 'results') { updateParticles(dt); drawResults(); }
+
+  } else if (screen === 'tracks') {
+    drawTracksScreen();
+
+  } else if (screen === 'editor') {
+    const clickHandled = drawEditor();
+    if (mouse.click && !clickHandled) {
+      editPts.push([mouse.x, mouse.y, 80]);
+      rebuildEditorPreview();
+    }
   }
 
   mouse.click = false;  // consume the click so it only fires once per frame
