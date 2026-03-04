@@ -19,7 +19,7 @@ const COLORS = {
   grid:  '#001628',  // subtle grid lines
   trk:   '#001a28',  // track surface fill
   ui:    '#00ff88',  // primary UI green
-  ui2:    '#0cb566',  // primary UI green
+  ui2:   '#0cb566',  // primary UI green
   dim:   '#0c6c3f',  // dimmed green
   wh:    '#aaffcc',  // light text
   muted: '#fcfcfc',  // muted / inactive text
@@ -266,10 +266,10 @@ document.addEventListener('keyup', e => { keys[e.key] = false; });
 
 // Keyboard bindings for each of the four player slots
 const CONTROLS = [
-  { up: 'ArrowUp', dn: 'ArrowDown', lt: 'ArrowLeft', rt: 'ArrowRight', give: 'Backspace', honk: '-'  }, // P1: arrows
-  { up: 'w',       dn: 's',         lt: 'a',          rt: 'd',         give: 'q',         honk: 'e'  }, // P2: WASD
-  { up: 'i',       dn: 'k',         lt: 'j',          rt: 'l',         give: 'u',         honk: 'o'  }, // P3: IJKL
-  { up: '8',       dn: '2',         lt: '4',          rt: '6',         give: '5',         honk: '0'  }, // P4: numpad
+  { up: 'ArrowUp', dn: 'ArrowDown', lt: 'ArrowLeft', rt: 'ArrowRight', give: 'Backspace', honk: '-',  boost: '.'  }, // P1: arrows
+  { up: 'w',       dn: 's',         lt: 'a',          rt: 'd',         give: 'q',         honk: 'e',  boost: 'r'  }, // P2: WASD
+  { up: 'i',       dn: 'k',         lt: 'j',          rt: 'l',         give: 'u',         honk: 'o',  boost: 'p'  }, // P3: IJKL
+  { up: '8',       dn: '2',         lt: '4',          rt: '6',         give: '5',         honk: '0',  boost: '*'  }, // P4: numpad
 ];
 
 // Mouse position tracked in logical canvas coordinates
@@ -317,6 +317,8 @@ const ACCEL       = 210;  // forward acceleration (px/s²)
 const BRAKE       = 260;  // braking deceleration (px/s²)
 const FRICTION    = 95;   // passive drag when not on throttle (px/s²)
 const TURN_RATE   = 3.0;  // maximum angular turn rate (rad/s), scaled by speed
+const BOOST_DRAIN  = 0.35; // boost charge consumed per second while active
+const BOOST_REFILL = 0.15; // boost charge restored per second while inactive
 
 // ── CAR FACTORY ───────────────────────────────────
 /**
@@ -349,6 +351,7 @@ function makeCar(id, isAI, color) {
     onTrack:      true,
     done: false, dnf: false, finishTime: 0,
     label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
+    boostCharge: 0.5, isBoosting: false,
     skidTimer: 0, honkCooldown: 0,
     lapStart: 0, bestLap: Infinity,
   };
@@ -430,10 +433,17 @@ function updateCar(car, dt) {
       car.honkCooldown = 0.5;
       spawnHonk(car.x, car.y, car.color);
     }
+    // Boost
+    car.isBoosting = keys[ctrl.boost] && car.boostCharge > 0;
+    if (car.isBoosting) {
+      car.boostCharge = Math.max(0, car.boostCharge - BOOST_DRAIN * dt);
+    } else {
+      car.boostCharge = Math.min(1, car.boostCharge + BOOST_REFILL * dt);
+    }
   }
 
   // ── Speed update ───────────────────────────────
-  const topSpeed = car.onTrack ? MAX_SPEED : 90;  // off-track cars are slowed
+  const topSpeed = car.onTrack ? (car.isBoosting ? MAX_SPEED * 1.3 : MAX_SPEED) : 90;
   if (car.throttle > 0) {
     car.speed = Math.min(car.speed + ACCEL * car.throttle * dt, topSpeed);
   } else if (car.throttle < 0) {
@@ -642,7 +652,8 @@ function drawCar(car, withLabel = true) {
   const carWidth = 22, carHeight = 12;
   ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.angle);
   // Body outline; human cars glow brighter than AI cars
-  ctx.shadowColor = car.color; ctx.shadowBlur = car.onTrack ? 14 : 4;
+  ctx.shadowColor = car.isBoosting ? '#ffffff' : car.color;
+  ctx.shadowBlur = car.isBoosting ? 28 : (car.onTrack ? 14 : 4);
   ctx.strokeStyle = car.color; ctx.lineWidth = car.isAI ? 1 : 1.8;
   ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
   // Windscreen area (semi-transparent fill at the rear of the body)
@@ -653,13 +664,15 @@ function drawCar(car, withLabel = true) {
   // Front headlight dot
   ctx.fillStyle = car.color;
   ctx.beginPath(); ctx.arc(carWidth / 2 - 1, 0, 2.5, 0, Math.PI * 2); ctx.fill();
-  // Speed-streak lines trailing behind human players at high speed
-  if (!car.isAI && Math.abs(car.speed) > 140) {
-    ctx.globalAlpha = 0.25; ctx.strokeStyle = car.color; ctx.lineWidth = 1;
+  // Speed-streak lines — longer and brighter when boosting
+  if (!car.isAI && (Math.abs(car.speed) > 140 || car.isBoosting)) {
+    const streakLen = car.isBoosting ? 22 : 10;
+    ctx.globalAlpha = car.isBoosting ? 0.7 : 0.25;
+    ctx.strokeStyle = car.isBoosting ? '#ffffff' : car.color; ctx.lineWidth = 1;
     [-3, 0, 3].forEach(offset => {
       ctx.beginPath();
       ctx.moveTo(-carWidth / 2 - 2, offset);
-      ctx.lineTo(-carWidth / 2 - 10, offset);
+      ctx.lineTo(-carWidth / 2 - streakLen, offset);
       ctx.stroke();
     });
     ctx.globalAlpha = 1;
@@ -751,7 +764,7 @@ function drawHUD() {
     ctx.fillText(car.done ? '✓ DONE' : car.dnf ? '✗ OUT' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS, x, 22);
   });
 
-  // Speedometer bars along the bottom, one per human player
+  // Speedometer + boost bars along the bottom, one per human player
   cars.filter(c => !c.isAI).forEach(car => {
     const barW = 70, barH = 5;
     const barX = 10 + (car.id * 84), barY = H - 16;
@@ -766,6 +779,12 @@ function drawHUD() {
     const statusLabel = car.done ? 'FINISHED' : car.dnf ? 'RETIRED' : Math.abs(Math.round(car.speed));
     ctx.fillText(car.label + '  ' + statusLabel, barX, barY - 1);
     ctx.textBaseline = 'alphabetic';
+    // Boost bar (above speed bar)
+    const bstY = barY - 8;
+    ctx.fillStyle = '#001520'; ctx.fillRect(barX, bstY, barW, 4);
+    ctx.fillStyle = car.isBoosting ? '#ffffff' : '#ff9900';
+    ctx.fillRect(barX, bstY, barW * car.boostCharge, 4);
+    ctx.strokeStyle = '#ff990044'; ctx.lineWidth = 0.8; ctx.strokeRect(barX, bstY, barW, 4);
   });
 
   // Race-end countdown banners
@@ -933,7 +952,7 @@ function drawStart() {
   ctx.fillStyle = COLORS.ui2; ctx.font = '16px Courier New';
   ctx.fillText('↑↓ CHANGE ROW   ← → CHANGE VALUE   ↵ ENTER START', W / 2, H - 42);
   ctx.fillStyle = '#002a20'; ctx.font = '13px Courier New';
-  ctx.fillText('IN RACE   P1 ↑↓←→   P2 WASD   P3 IJKL   P4 NUM8426   BKSP/Q/U/5 RETIRE   -/E/O/0 HONK', W / 2, H - 16);
+  ctx.fillText('IN RACE   P1 ↑↓←→ //BOOST   P2 WASD R/BOOST   P3 IJKL P/BOOST   P4 NUM8426 */BOOST   BKSP/Q/U/5 RETIRE', W / 2, H - 16);
 }
 
 function drawCountdown() {
