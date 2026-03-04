@@ -228,7 +228,7 @@ function trackProgress(x, y, track) {
 }
 
 /** Returns a darkened version of a #rrggbb hex colour (factor 0–1). */
-function muteColor(hex, factor = 0.35) {
+function muteColor(hex, factor = 0.8) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
@@ -328,6 +328,7 @@ let resultsCooldown = 0;      // seconds before results buttons become clickable
 let menuRow       = 0;        // which start-screen row is selected (0–2)
 let editPts       = [];       // [x, y, w] points being drawn in the editor
 let editPreview   = null;     // compiled track object for live preview (null if < 3 pts)
+let musicMuted    = false;    // whether the soundtrack is muted
 // Race-end timing for the three win conditions
 let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
 let allOutAt            = -1; // raceTime when all cars became done or dnf
@@ -680,7 +681,7 @@ function drawCar(car, withLabel = true) {
   // Body outline; human cars glow brighter than AI cars
   ctx.shadowColor = car.isBoosting ? '#ffffff' : car.color;
   ctx.shadowBlur = car.isBoosting ? 28 : (car.onTrack ? 14 : 4);
-  ctx.strokeStyle = car.color; ctx.lineWidth = car.isAI ? 1 : 1.8;
+  ctx.strokeStyle = car.color; ctx.lineWidth = 1.8;
   ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
   // Windscreen area (semi-transparent fill at the rear of the body)
   ctx.fillStyle = car.color + '44';
@@ -969,6 +970,23 @@ function drawStart() {
   ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('✎  EDIT TRACKS', ROW_X + ROW_W / 2, etY + etH / 2);
   if (mouse.click && editTracksHovered) screen = 'tracks';
+
+  // ── MUTE button ──
+  const muteY = etY + etH + 8;
+  const muteH = 38;
+  const muteHov = inBox(mouse.x, mouse.y, ROW_X, muteY, ROW_W, muteH);
+  const muteCol = musicMuted ? COLORS.danger : COLORS.secondary;
+  ctx.fillStyle   = muteHov ? muteCol : muteCol + BTN_DIM;
+  ctx.strokeStyle = muteCol; ctx.lineWidth = 1;
+  ctx.fillRect(ROW_X, muteY, ROW_W, muteH);
+  ctx.strokeRect(ROW_X, muteY, ROW_W, muteH);
+  ctx.fillStyle = muteHov ? COLORS.bg : muteCol;
+  ctx.font = 'bold 16px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(musicMuted ? '♪  SOUND OFF' : '♪  SOUND ON', ROW_X + ROW_W / 2, muteY + muteH / 2);
+  if (mouse.click && muteHov) {
+    musicMuted = !musicMuted;
+    typeof setMusicMuted === 'function' && setMusicMuted(musicMuted);
+  }
 
   // ── Footer ──
   ctx.fillStyle = COLORS.secondary; ctx.fillRect(0, H - 62, W, 62);
