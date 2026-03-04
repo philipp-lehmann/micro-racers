@@ -847,7 +847,7 @@ function drawStart() {
   const glow = 18 + Math.sin(titlePulse) * 8;
   ctx.shadowColor = COLORS.ui; ctx.shadowBlur = glow;
   ctx.fillStyle = COLORS.ui; ctx.font = 'bold 52px Courier New';
-  ctx.fillText('MICRO  RACERS', ROW_X, 100); ctx.shadowBlur = 0;
+  ctx.fillText('MICRO REVAMPED', ROW_X, 100); ctx.shadowBlur = 0;
 
   // ── Keyboard-navigable rows ──
   const rowDefs = [
@@ -915,7 +915,7 @@ function drawStart() {
   const etY = sbY + ROW_H + 8;
   const etH = 50;
   const editTracksHovered = inBox(mouse.x, mouse.y, ROW_X, etY, ROW_W, etH);
-  ctx.fillStyle   = editTracksHovered ? COLORS.ui2 : '#001520';
+  ctx.fillStyle   = editTracksHovered ? COLORS.ui2 : COLORS.ui2 + '1a'
   ctx.strokeStyle = COLORS.ui2; ctx.lineWidth = 1.5;
   if (editTracksHovered) { ctx.shadowColor = COLORS.ui2; ctx.shadowBlur = 10; }
   ctx.fillRect(ROW_X, etY, ROW_W, etH);
@@ -926,12 +926,12 @@ function drawStart() {
   if (mouse.click && editTracksHovered) screen = 'tracks';
 
   // ── Footer ──
-  ctx.fillStyle = 'rgba(0,10,20,0.92)'; ctx.fillRect(0, H - 62, W, 62);
-  ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
+  ctx.fillStyle = COLORS.ui2; ctx.fillRect(0, H - 62, W, 62);
+  ctx.strokeStyle = COLORS.ui2; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, H - 62); ctx.lineTo(W, H - 62); ctx.stroke();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#004433'; ctx.font = '15px Courier New';
-  ctx.fillText('MENU   ↑↓ ROW   ←→ CHANGE   ENTER START', W / 2, H - 42);
+  ctx.fillStyle = COLORS.ui2; ctx.font = '16px Courier New';
+  ctx.fillText('↑↓ CHANGE ROW   ← → CHANGE VALUE   ↵ ENTER START', W / 2, H - 42);
   ctx.fillStyle = '#002a20'; ctx.font = '13px Courier New';
   ctx.fillText('IN RACE   P1 ↑↓←→   P2 WASD   P3 IJKL   P4 NUM8426   BKSP/Q/U/5 RETIRE   -/E/O/0 HONK', W / 2, H - 16);
 }
@@ -1131,7 +1131,7 @@ function drawTracksScreen() {
   if (mouse.click && closeHov) { screen = 'start'; return; }
 
   // ── ADD NEW TRACK button ──
-  const addW = 220, addH = 44;
+  const addW = 220, addH = 50;
   const addX = W - addW - 90, addY = (HDR_H - addH) / 2;
   const addHov = inBox(mouse.x, mouse.y, addX, addY, addW, addH);
   ctx.fillStyle = addHov ? COLORS.ui : '#001c2a';
@@ -1172,7 +1172,7 @@ function drawTracksScreen() {
     ctx.fillStyle = COLORS.wh; ctx.font = '16px Courier New';
     ctx.fillText(track.sub, txtX, midY + 8);
     ctx.fillStyle = track.isUser ? '#00ccff' : '#445566';
-    ctx.font = '14px Courier New';
+    ctx.font = '16px Courier New';
     ctx.fillText(track.isUser ? '(CUSTOM)' : '(BUILT-IN)', txtX, midY + 30);
 
     // Click row to select track
