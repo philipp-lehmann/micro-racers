@@ -487,6 +487,8 @@ function worldToScreen(wx, wy) {
 
 /** Smooth-follows the centroid of human players and adjusts zoom for spread. */
 function updateCamera(dt) {
+  const maxZoom = 2.25;
+  const minZoom = 0.5;
   const humanCars = cars.filter(c => !c.isAI);
   const targets = humanCars.length ? humanCars : cars;
   const cx = targets.reduce((s, c) => s + c.x, 0) / targets.length;
@@ -498,10 +500,10 @@ function updateCamera(dt) {
   }
   // Speed-based zoom: close when slow, pulls back at full throttle
   const avgSpeed = targets.reduce((s, c) => s + Math.abs(c.speed), 0) / targets.length;
-  const speedZoom = 1.5 - (avgSpeed / MAX_SPEED) * 0.5;  // 1.25 at rest → 0.75 at max speed
+  const speedZoom = maxZoom - (avgSpeed / MAX_SPEED) * 0.5;  // 2.25 at rest → 0.75 at max speed
   // Spread-based zoom: zoom out when players are far apart
   const spreadFactor = 560 / (spread + 560);
-  const targetZoom = Math.max(0.35, speedZoom * spreadFactor);
+  const targetZoom = Math.max(minZoom, speedZoom * spreadFactor);
   const lerpSpeed = 3;
   camera.x += (cx - camera.x) * lerpSpeed * dt;
   camera.y += (cy - camera.y) * lerpSpeed * dt;
@@ -881,8 +883,8 @@ function drawResults() {
 
   // ── Buttons ─────────────────────────────────────
   const resultBtns = [
-    { l: 'CHANGE TRACK ⤨', x: W / 2 - 220 },
     { l: 'RACE AGAIN ▶',   x: W / 2 + 14  },
+    { l: 'CHANGE TRACK ⤨', x: W / 2 - 220 },
   ];
   const btnsReady = resultsCooldown <= 0;
   ctx.save(); ctx.globalAlpha = btnsReady ? 1 : 0.35;
@@ -1239,8 +1241,8 @@ function loop(timestamp) {
     // Handle button clicks before drawing so no mid-draw state changes occur
     if (resultsCooldown <= 0 && mouse.click) {
       const { btnW, btnH, btnY } = RES;
-      if      (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
-      else if (inBox(mouse.x, mouse.y, W / 2 + 14,  btnY, btnW, btnH)) { screen = 'start'; setMusicMode('beat'); }
+      if      (inBox(mouse.x, mouse.y, W / 2 + 14, btnY, btnW, btnH)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
+      else if (inBox(mouse.x, mouse.y, W / 2 - 220,  btnY, btnW, btnH)) { screen = 'start'; setMusicMode('beat'); }
     }
     if (screen === 'results') { updateParticles(dt); drawResults(); }
 

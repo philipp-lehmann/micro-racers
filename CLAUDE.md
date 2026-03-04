@@ -4,25 +4,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MICRO RACERS is a self-contained browser racing game in a single file: `micro-racers.html`. There is no build system, package manager, or dependencies — open the file directly in any modern browser to run it.
+MICRO RACERS is a browser racing game with no build system or package manager. Open `index.html` directly in any modern browser to run it.
 
-## Architecture
+## File Structure
 
-The entire game lives in `micro-racers.html` as embedded JavaScript and CSS. It is structured as a state machine with a `requestAnimationFrame` game loop:
+Scripts are loaded in dependency order in `index.html`:
 
-**Screen states**: `'start'` → `'countdown'` → `'race'` → `'results'`
+| File | Contents |
+|------|----------|
+| `music.js` | Strudel-based soundtrack. Exposes `setMusicMode(mode)` and `setMusicMuted(bool)` as globals. Modes: `'beat'` (start/results), `'race'` (full stack). |
+| `tracks.js` | `TRACK_DEFS` array — read-only built-in track control points. |
+| `cars.js` | Physics constants, `CAR_PRESETS`, `makeCar()`, `updateCar()`, `resolveCarCollisions()`, `drawCar()`. |
+| `micro-racers.js` | Everything else: canvas setup, geometry helpers, input, game state, particles, camera, all screen draw functions, main loop. |
+| `micro-racers.css` | Three rules only (reset, body, canvas). |
 
-**Key subsystems and their entry points:**
-- **Track**: `buildSpline()` / `buildEdges()` generate geometry from control point definitions in `TDEFS`; `trackProg()` computes 0–1 lap progress; `nearDist()` checks if a car is on-track
-- **Cars**: `makeCar(id, isAI, col)` creates car state; `updateCar(car, dt)` runs per-frame physics (acceleration, braking, friction, turning, off-track slowdown)
-- **AI**: simple waypoint-following inside `updateCar` — targets the nearest track spline point ahead and adjusts steering/throttle accordingly
-- **Particles**: `spawnSkid()` / `spawnBurst()` push into a `parts[]` array; `updateParticles(dt)` ticks them
-- **Rendering**: `drawBg()`, `drawTrack()`, `drawCar()`, `drawParticles()`, `drawHUD()` — all draw to a single `<canvas>` via 2D context
-- **Input**: 4 hardcoded keyboard schemes (arrows / WASD / IJKL / numpad) read from a `keys` object populated by `keydown`/`keyup` listeners
-- **Main loop**: `loop(ts)` — delta-time capped at 50 ms, calls physics then rendering each frame
+`cars.js` and `tracks.js` are loaded before `micro-racers.js` and communicate via globals — there is no module system.
 
-**Physics constants** (top of `<script>`): `MAX_SPD`, `MAX_REV`, `ACCEL`, `BRAKE`, `FRIC`, `TURN_R`
+## Screen State Machine
 
-**Color palette**: `P` object — change values here to retheme the entire game.
+```
+'start' → 'countdown' → 'race' → 'results'
+               ↕                       ↕
+           'tracks'  ←→  'editor'
+```
 
-**Tracks**: defined in `TDEFS` as arrays of `{x, y}` control points plus a `w` (width) property.
+The current screen is the `screen` variable. The main `loop()` function dispatches to per-screen draw/update functions. Button click handling for the results screen happens in the main loop (not inside `drawResults`).
+
+## Key Architecture Points
+
+**Track geometry** (`micro-racers.js`): `buildTrackObj(def, isUser)` converts raw `[x, y, w]` control points into a pre-computed object with `spline`, `edges`, `cumulativeLengths`, and `totalLength`. The mutable `TRACKS` array combines built-in (`TRACK_DEFS`) and user tracks (persisted in `localStorage` under `mrUserTracks`).
+
+**Car physics** (`cars.js`): Acceleration uses a quadratic-drag model — `dv/dt = accel·(1-(v/topSpeed)²)` — which reaches ~90% top speed in ~2 s and asymptotes to 100% over ~10 s. Off-track penalty is a gradient: `offFraction` (0–1) ramps linearly over `GRAVEL_ZONE = 40px` past the track edge, scaling both the top-speed cap and exponential speed decay. All per-car physics params live in `CAR_PRESETS`; each car holds a `stats` reference.
+
+**Car presets** (`cars.js`): `CAR_PRESETS` is the extension point for different car types. Each preset has `topSpeed`, `accel`, `brake`, `friction`, `turnRate`, `boostFactor`, `reverseMax`.
+
+**Rendering**: The game uses an isometric transform applied via `ctx.transform()` each frame. `worldToScreen()` converts world coords for HUD elements drawn outside the transform. `drawCar()` operates in world space (before the iso restore).
+
+**Camera** (`micro-racers.js:updateCamera`): Smooth-follows the centroid of human players. Zoom is driven by two factors multiplied together — speed (`1.5` at rest → `0.75` at max speed) and player spread (`560 / (spread + 560)`), clamped to a minimum of `0.35`.
+
+**Music** (`music.js`): `initStrudel()` is called synchronously (returns `undefined`, not a Promise). All drum synthesis uses Web Audio oscillators (`s("sine/square/triangle/sawtooth")`) — no sample files. The `'beat'` mode plays an 8-beat kick intro before the full pattern drops (via `setTimeout`).
+
+**Color conventions**: `COLORS` object for the palette. Append `BTN_DIM` (`'1a'`) to any 6-digit hex for a 10%-opacity idle button background. `muteColor(hex, factor)` derives AI car colors. `COLORS.danger` is used for all destructive actions.
+
+**Input**: `keys` object (keydown/keyup), `mouse` object (reset each frame by the main loop). `CONTROLS[0–3]` maps player index to key bindings including `boost`.
+
+## Adding a Track
+
+Append to `TRACK_DEFS` in `tracks.js`:
+```js
+{ name: 'MY TRACK', sub: 'SUBTITLE', col: '#rrggbb', pts: [[x, y, w], …] }
+```
+`pts` is a closed loop of `[x, y, w]` control points fed into Catmull-Rom. `w` is road width in pixels (typically 70–150). The game world is 1600×1140 px.
+
+## Adding a Car Type
+
+Append to `CAR_PRESETS` in `cars.js` and update `makeCar` (or the race setup in `initRace`) to select the preset by index.
