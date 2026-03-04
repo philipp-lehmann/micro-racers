@@ -17,16 +17,19 @@ window.addEventListener('resize', resize);
 const COLORS = {
   bg:    '#000c18',  // dark navy background
   grid:  '#001628',  // subtle grid lines
-  trk:   '#001a28',  // track surface fill
-  ui:    '#00ff88',  // primary UI green
-  ui2:   '#0cb566',  // primary UI green
-  dim:   '#0c6c3f',  // dimmed green
-  wh:    '#aaffcc',  // light text
+  track:     '#001a28',  // track surface fill
+  primary:   '#00ff88',  // primary UI green
+  secondary: '#0cb566',  // secondary UI green
+  dim:       '#0c6c3f',  // dimmed green
+  white:     '#aaffcc',  // light text
   muted: '#fcfcfc',  // muted / inactive text
   // Player car colors: cyan, red, yellow, purple
   pc: ['#00ffff', '#ff3355', '#ffee00', '#cc44ff'],
   ai: '#005a9f',     // AI car color (dark blue-grey)
+  danger: '#ff3366', // delete / discard red
 };
+// Button idle-state background: 10% tint of the button's accent colour
+const BTN_DIM = '1a';
 
 // ── SPLINE & GEOMETRY ─────────────────────────────
 
@@ -590,7 +593,7 @@ function drawTrack(track, alpha) {
   ctx.moveTo(edges.rightEdge[0][0], edges.rightEdge[0][1]);
   for (let i = 1; i < numPts; i++) ctx.lineTo(edges.rightEdge[i][0], edges.rightEdge[i][1]);
   ctx.closePath();
-  ctx.fillStyle = COLORS.trk; ctx.fill('evenodd');
+  ctx.fillStyle = COLORS.track; ctx.fill('evenodd');
 
   // Glowing coloured edge lines
   [edges.leftEdge, edges.rightEdge].forEach(edge => {
@@ -749,7 +752,7 @@ function drawHUD() {
   ctx.textBaseline = 'middle';
 
   // Race timer (left) and track name + leading lap (right)
-  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'left';
+  ctx.fillStyle = COLORS.primary; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'left';
   ctx.fillText('TIME  ' + formatTime(raceTime), 10, 15);
   ctx.fillStyle = track.col; ctx.font = '20px Courier New'; ctx.textAlign = 'right';
   ctx.fillText(track.name + '  L' + (Math.min(sorted[0].laps + 1, LAPS)) + '/' + LAPS, W - 10, 15);
@@ -760,7 +763,7 @@ function drawHUD() {
     ctx.fillStyle = car.color; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
     ctx.fillText((i + 1) + '. ' + car.label, x, 10);
     ctx.font = '16px Courier New';
-    ctx.fillStyle = car.done ? COLORS.ui : car.dnf ? '#ff6644' : COLORS.wh;
+    ctx.fillStyle = car.done ? COLORS.primary : car.dnf ? '#ff6644' : COLORS.white;
     ctx.fillText(car.done ? '✓ DONE' : car.dnf ? '✗ OUT' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS, x, 22);
   });
 
@@ -774,7 +777,7 @@ function drawHUD() {
     ctx.fillStyle = speedPercent > 0.8 ? '#ff4444' : speedPercent > 0.5 ? '#ffee00' : car.color;
     ctx.fillRect(barX, barY, barW * speedPercent, barH);
     ctx.strokeStyle = car.color + '44'; ctx.lineWidth = 0.8; ctx.strokeRect(barX, barY, barW, barH);
-    ctx.fillStyle = car.done ? COLORS.ui : car.dnf ? '#ff4444' : car.color;
+    ctx.fillStyle = car.done ? COLORS.primary : car.dnf ? '#ff4444' : car.color;
     ctx.font = '14px Courier New'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     const statusLabel = car.done ? 'FINISHED' : car.dnf ? 'RETIRED' : Math.abs(Math.round(car.speed));
     ctx.fillText(car.label + '  ' + statusLabel, barX, barY - 1);
@@ -791,7 +794,7 @@ function drawHUD() {
   if (allHumansFinishedAt >= 0 && allOutAt < 0) {
     const remaining = 10 - (raceTime - allHumansFinishedAt);
     if (remaining > 0) {
-      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 18px Courier New';
+      ctx.fillStyle = COLORS.primary; ctx.font = 'bold 18px Courier New';
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       ctx.fillText('AI FINISHES IN  ' + remaining.toFixed(1) + 's', W / 2, H - 6);
     }
@@ -864,8 +867,8 @@ function drawStart() {
   // ── Title (left column, top-left) ──
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   const glow = 18 + Math.sin(titlePulse) * 8;
-  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = glow;
-  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 52px Courier New';
+  ctx.shadowColor = COLORS.primary; ctx.shadowBlur = glow;
+  ctx.fillStyle = COLORS.primary; ctx.font = 'bold 52px Courier New';
   ctx.fillText('MICRO REVAMPED', ROW_X, 100); ctx.shadowBlur = 0;
 
   // ── Keyboard-navigable rows ──
@@ -897,20 +900,20 @@ function drawStart() {
     ctx.save();
     ctx.globalAlpha = sel ? 1 : 0.9;
 
-    ctx.fillStyle   = sel ? COLORS.ui + '1a' : COLORS.ui2 + '1a'
-    ctx.strokeStyle = sel ? COLORS.ui        : COLORS.ui2;
+    ctx.fillStyle   = sel ? COLORS.primary + BTN_DIM : COLORS.secondary + BTN_DIM
+    ctx.strokeStyle = sel ? COLORS.primary        : COLORS.secondary;
     ctx.lineWidth   = sel ? 2 : 1;
     ctx.fillRect(ROW_X, ry, ROW_W, ROW_H);
     ctx.strokeRect(ROW_X, ry, ROW_W, ROW_H);
     ctx.shadowBlur = 0;
 
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = sel ? COLORS.ui : COLORS.ui2;
+    ctx.fillStyle = sel ? COLORS.primary : COLORS.secondary;
     ctx.font = '15px Courier New';
     ctx.fillText(row.label, ROW_X + 26, rcy);
 
     ctx.textAlign = 'center';
-    ctx.fillStyle = sel ? COLORS.ui : COLORS.ui2;
+    ctx.fillStyle = sel ? COLORS.primary : COLORS.secondary;
     ctx.font = (sel ? 'bold ' : '') + '28px Courier New';
     ctx.fillText('←  ' + row.value + '  →', ROW_X + ROW_W / 2, rcy);
     ctx.restore();
@@ -920,12 +923,12 @@ function drawStart() {
   const sbY = 280 + 3 * 108 + 20;  // 20px gap after last row
   const startHovered = inBox(mouse.x, mouse.y, ROW_X, sbY, ROW_W, ROW_H);
   const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
-  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;
-  ctx.fillStyle   = startHovered ? COLORS.ui : '#002a18';
-  ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 2;
+  ctx.shadowColor = COLORS.primary; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;
+  ctx.fillStyle   = startHovered ? COLORS.primary : COLORS.primary + BTN_DIM;
+  ctx.strokeStyle = COLORS.primary; ctx.lineWidth = 2;
   ctx.fillRect(ROW_X, sbY, ROW_W, ROW_H);
   ctx.strokeRect(ROW_X, sbY, ROW_W, ROW_H); ctx.shadowBlur = 0;
-  ctx.fillStyle = startHovered ? COLORS.bg : COLORS.ui;
+  ctx.fillStyle = startHovered ? COLORS.bg : COLORS.primary;
   ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('▶  START RACE', ROW_X + ROW_W / 2, sbY + ROW_H / 2);
   if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
@@ -934,22 +937,22 @@ function drawStart() {
   const etY = sbY + ROW_H + 8;
   const etH = 50;
   const editTracksHovered = inBox(mouse.x, mouse.y, ROW_X, etY, ROW_W, etH);
-  ctx.fillStyle   = editTracksHovered ? COLORS.ui2 : COLORS.ui2 + '1a'
-  ctx.strokeStyle = COLORS.ui2; ctx.lineWidth = 1.5;
-  if (editTracksHovered) { ctx.shadowColor = COLORS.ui2; ctx.shadowBlur = 10; }
+  ctx.fillStyle   = editTracksHovered ? COLORS.secondary : COLORS.secondary + BTN_DIM
+  ctx.strokeStyle = COLORS.secondary; ctx.lineWidth = 1.5;
+  if (editTracksHovered) { ctx.shadowColor = COLORS.secondary; ctx.shadowBlur = 10; }
   ctx.fillRect(ROW_X, etY, ROW_W, etH);
   ctx.strokeRect(ROW_X, etY, ROW_W, etH); ctx.shadowBlur = 0;
-  ctx.fillStyle = editTracksHovered ? COLORS.bg : COLORS.ui2;
+  ctx.fillStyle = editTracksHovered ? COLORS.bg : COLORS.secondary;
   ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('✎  EDIT TRACKS', ROW_X + ROW_W / 2, etY + etH / 2);
   if (mouse.click && editTracksHovered) screen = 'tracks';
 
   // ── Footer ──
-  ctx.fillStyle = COLORS.ui2; ctx.fillRect(0, H - 62, W, 62);
-  ctx.strokeStyle = COLORS.ui2; ctx.lineWidth = 1;
+  ctx.fillStyle = COLORS.secondary; ctx.fillRect(0, H - 62, W, 62);
+  ctx.strokeStyle = COLORS.secondary; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, H - 62); ctx.lineTo(W, H - 62); ctx.stroke();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = COLORS.ui2; ctx.font = '16px Courier New';
+  ctx.fillStyle = COLORS.secondary; ctx.font = '16px Courier New';
   ctx.fillText('↑↓ CHANGE ROW   ← → CHANGE VALUE   ↵ ENTER START', W / 2, H - 42);
   ctx.fillStyle = '#002a20'; ctx.font = '13px Courier New';
   ctx.fillText('IN RACE   P1 ↑↓←→ //BOOST   P2 WASD R/BOOST   P3 IJKL P/BOOST   P4 NUM8426 */BOOST   BKSP/Q/U/5 RETIRE', W / 2, H - 16);
@@ -964,8 +967,8 @@ function drawCountdown() {
   const alpha = Math.min(1, progress * 2);
   ctx.save(); ctx.globalAlpha = alpha;
   ctx.translate(W / 2, H / 2); ctx.scale(scale, scale);
-  ctx.fillStyle   = countdownNum > 0 ? COLORS.wh : COLORS.ui;
-  ctx.shadowColor = countdownNum > 0 ? COLORS.wh : COLORS.ui; ctx.shadowBlur = 80;
+  ctx.fillStyle   = countdownNum > 0 ? COLORS.white : COLORS.primary;
+  ctx.shadowColor = countdownNum > 0 ? COLORS.white : COLORS.primary; ctx.shadowBlur = 80;
   ctx.font = 'bold 140px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(label, 0, 0); ctx.shadowBlur = 0; ctx.restore();
   ctx.fillStyle = '#334455'; ctx.font = '20px Courier New';
@@ -993,8 +996,8 @@ function drawResults() {
 
   // ── Title ──────────────────────────────────────
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 22;
-  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 38px Courier New';
+  ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 22;
+  ctx.fillStyle = COLORS.primary; ctx.font = 'bold 38px Courier New';
   ctx.fillText('RACE COMPLETE', W / 2, 52); ctx.shadowBlur = 0;
   ctx.fillStyle = track.col; ctx.font = '18px Courier New';
   ctx.fillText(track.name + '  ·  ' + track.sub + '  ·  ' + LAPS + ' LAP' + (LAPS > 1 ? 'S' : ''), W / 2, 78);
@@ -1049,7 +1052,7 @@ function drawResults() {
 
     // Finish time or status
     const resultText = car.done ? formatTime(car.finishTime) : car.dnf ? 'RETIRED' : 'DNF';
-    ctx.fillStyle = car.done ? COLORS.wh : '#445566';
+    ctx.fillStyle = car.done ? COLORS.white : '#445566';
     ctx.font = (isWinner ? 'bold 28' : '22') + 'px Courier New';
     ctx.fillText(resultText, tableX + COL.time, rowCY);
 
@@ -1084,11 +1087,11 @@ function drawResults() {
   ctx.save(); ctx.globalAlpha = btnsReady ? 1 : 0.35;
   resultBtns.forEach(btn => {
     const isHovered = btnsReady && inBox(mouse.x, mouse.y, btn.x, btnY, btnW, btnH);
-    ctx.fillStyle   = isHovered ? COLORS.ui : '#001c2a';
-    ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
-    if (isHovered) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 12; }
+    ctx.fillStyle   = isHovered ? COLORS.primary : COLORS.primary + BTN_DIM;
+    ctx.strokeStyle = COLORS.primary; ctx.lineWidth = 1.5;
+    if (isHovered) { ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 12; }
     ctx.fillRect(btn.x, btnY, btnW, btnH); ctx.strokeRect(btn.x, btnY, btnW, btnH); ctx.shadowBlur = 0;
-    ctx.fillStyle = isHovered ? COLORS.bg : COLORS.ui;
+    ctx.fillStyle = isHovered ? COLORS.bg : COLORS.primary;
     ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(btn.l, btn.x + btnW / 2, btnY + btnH / 2);
   });
@@ -1131,20 +1134,20 @@ function drawTracksScreen() {
   ctx.fillStyle = 'rgba(0,8,20,0.95)'; ctx.fillRect(0, 0, W, HDR_H);
   ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, HDR_H); ctx.lineTo(W, HDR_H); ctx.stroke();
-  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 32px Courier New';
+  ctx.fillStyle = COLORS.primary; ctx.font = 'bold 32px Courier New';
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 14;
+  ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 14;
   ctx.fillText('TRACKS', LIST_X, HDR_H / 2); ctx.shadowBlur = 0;
 
   // ✕ close button
   const closeW = 50, closeH = 50;
   const closeX = W - closeW - 20, closeY = (HDR_H - closeH) / 2;
   const closeHov = inBox(mouse.x, mouse.y, closeX, closeY, closeW, closeH);
-  ctx.fillStyle = closeHov ? '#ff3366' : '#001a28';
-  ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+  ctx.fillStyle = closeHov ? COLORS.danger : COLORS.danger + BTN_DIM;
+  ctx.strokeStyle = COLORS.danger; ctx.lineWidth = 1.5;
   ctx.fillRect(closeX, closeY, closeW, closeH);
   ctx.strokeRect(closeX, closeY, closeW, closeH);
-  ctx.fillStyle = closeHov ? '#fff' : '#ff3366';
+  ctx.fillStyle = closeHov ? '#fff' : COLORS.danger;
   ctx.font = 'bold 22px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('✕', closeX + closeW / 2, closeY + closeH / 2);
   if (mouse.click && closeHov) { screen = 'start'; return; }
@@ -1153,12 +1156,12 @@ function drawTracksScreen() {
   const addW = 220, addH = 50;
   const addX = W - addW - 90, addY = (HDR_H - addH) / 2;
   const addHov = inBox(mouse.x, mouse.y, addX, addY, addW, addH);
-  ctx.fillStyle = addHov ? COLORS.ui : '#001c2a';
-  ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
-  if (addHov) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 10; }
+  ctx.fillStyle = addHov ? COLORS.primary : COLORS.primary + BTN_DIM;
+  ctx.strokeStyle = COLORS.primary; ctx.lineWidth = 1.5;
+  if (addHov) { ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 10; }
   ctx.fillRect(addX, addY, addW, addH);
   ctx.strokeRect(addX, addY, addW, addH); ctx.shadowBlur = 0;
-  ctx.fillStyle = addHov ? COLORS.bg : COLORS.ui;
+  ctx.fillStyle = addHov ? COLORS.bg : COLORS.primary;
   ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('＋  ADD NEW TRACK', addX + addW / 2, addY + addH / 2);
   if (mouse.click && addHov) { editPts = []; editPreview = null; screen = 'editor'; return; }
@@ -1178,7 +1181,7 @@ function drawTracksScreen() {
 
     // Mini track preview
     const prevX = LIST_X + 8, prevY = ry + (ROW_H - 4 - PREV_H) / 2;
-    ctx.fillStyle = COLORS.trk;
+    ctx.fillStyle = COLORS.track;
     ctx.fillRect(prevX, prevY, PREV_W, PREV_H);
     drawMiniTrackPreview(track, prevX, prevY, PREV_W, PREV_H);
 
@@ -1188,7 +1191,7 @@ function drawTracksScreen() {
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillStyle = track.col; ctx.font = 'bold 26px Courier New';
     ctx.fillText(track.name, txtX, midY - 18);
-    ctx.fillStyle = COLORS.wh; ctx.font = '16px Courier New';
+    ctx.fillStyle = COLORS.white; ctx.font = '16px Courier New';
     ctx.fillText(track.sub, txtX, midY + 8);
     ctx.fillStyle = track.isUser ? '#00ccff' : '#445566';
     ctx.font = '16px Courier New';
@@ -1205,11 +1208,11 @@ function drawTracksScreen() {
     const delY = ry + (ROW_H - 4 - delH) / 2;
     if (track.isUser) {
       const delHov = inBox(mouse.x, mouse.y, delX, delY, delW, delH);
-      ctx.fillStyle = delHov ? '#ff3366' : '#001820';
-      ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+      ctx.fillStyle = delHov ? COLORS.danger : COLORS.danger + BTN_DIM;
+      ctx.strokeStyle = COLORS.danger; ctx.lineWidth = 1.5;
       ctx.fillRect(delX, delY, delW, delH);
       ctx.strokeRect(delX, delY, delW, delH);
-      ctx.fillStyle = delHov ? '#fff' : '#ff3366';
+      ctx.fillStyle = delHov ? '#fff' : COLORS.danger;
       ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
       if (mouse.click && delHov) {
@@ -1220,7 +1223,7 @@ function drawTracksScreen() {
       }
     } else {
       // Greyed-out placeholder
-      ctx.fillStyle = '#001820'; ctx.strokeStyle = '#002030'; ctx.lineWidth = 1;
+      ctx.fillStyle = COLORS.danger + BTN_DIM; ctx.strokeStyle = '#002030'; ctx.lineWidth = 1;
       ctx.fillRect(delX, delY, delW, delH); ctx.strokeRect(delX, delY, delW, delH);
       ctx.fillStyle = '#223344';
       ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1269,8 +1272,8 @@ function drawEditor() {
       ctx.save();
       ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2);
       ctx.fillStyle = '#000c18'; ctx.fill();
-      ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 11px Courier New';
+      ctx.strokeStyle = COLORS.primary; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = COLORS.primary; ctx.font = 'bold 11px Courier New';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(i + 1, x, y);
       ctx.restore();
@@ -1295,22 +1298,22 @@ function drawEditor() {
 
   // DISCARD button
   const discardHov = inBox(mouse.x, mouse.y, discardX, BTN_Y, BTN_W, BTN_H);
-  ctx.fillStyle = discardHov ? '#ff3366' : '#001820';
-  ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+  ctx.fillStyle = discardHov ? COLORS.danger : COLORS.danger + BTN_DIM;
+  ctx.strokeStyle = COLORS.danger; ctx.lineWidth = 1.5;
   ctx.fillRect(discardX, BTN_Y, BTN_W, BTN_H); ctx.strokeRect(discardX, BTN_Y, BTN_W, BTN_H);
-  ctx.fillStyle = discardHov ? '#fff' : '#ff3366';
+  ctx.fillStyle = discardHov ? '#fff' : COLORS.danger;
   ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('DISCARD', discardX + BTN_W / 2, BTN_Y + BTN_H / 2);
 
   // SAVE button
   ctx.save(); ctx.globalAlpha = canSave ? 1 : 0.35;
   const saveHov = canSave && inBox(mouse.x, mouse.y, saveX, BTN_Y, BTN_W, BTN_H);
-  ctx.fillStyle = saveHov ? COLORS.ui : '#001c2a';
-  ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
-  if (saveHov) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 10; }
+  ctx.fillStyle = saveHov ? COLORS.primary : COLORS.primary + BTN_DIM;
+  ctx.strokeStyle = COLORS.primary; ctx.lineWidth = 1.5;
+  if (saveHov) { ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 10; }
   ctx.fillRect(saveX, BTN_Y, BTN_W, BTN_H); ctx.strokeRect(saveX, BTN_Y, BTN_W, BTN_H);
   ctx.shadowBlur = 0;
-  ctx.fillStyle = saveHov ? COLORS.bg : COLORS.ui;
+  ctx.fillStyle = saveHov ? COLORS.bg : COLORS.primary;
   ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('SAVE', saveX + BTN_W / 2, BTN_Y + BTN_H / 2);
   ctx.restore();
@@ -1319,15 +1322,15 @@ function drawEditor() {
   const cW = 50, cH = 50;
   const cX = W - cW - 14, cY = 14;
   const cHov = inBox(mouse.x, mouse.y, cX, cY, cW, cH);
-  ctx.fillStyle = cHov ? '#ff3366' : '#001a28';
-  ctx.strokeStyle = '#ff3366'; ctx.lineWidth = 1.5;
+  ctx.fillStyle = cHov ? COLORS.danger : COLORS.danger + BTN_DIM;
+  ctx.strokeStyle = COLORS.danger; ctx.lineWidth = 1.5;
   ctx.fillRect(cX, cY, cW, cH); ctx.strokeRect(cX, cY, cW, cH);
-  ctx.fillStyle = cHov ? '#fff' : '#ff3366';
+  ctx.fillStyle = cHov ? '#fff' : COLORS.danger;
   ctx.font = 'bold 22px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('✕', cX + cW / 2, cY + cH / 2);
 
   // Point count
-  ctx.fillStyle = editPts.length >= 3 ? COLORS.ui : '#334455';
+  ctx.fillStyle = editPts.length >= 3 ? COLORS.primary : '#334455';
   ctx.font = '14px Courier New'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.fillText(editPts.length + ' pts', discardX - 16, TB_Y + TB_H / 2);
 
