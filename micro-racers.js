@@ -19,9 +19,10 @@ const COLORS = {
   grid:  '#001628',  // subtle grid lines
   trk:   '#001a28',  // track surface fill
   ui:    '#00ff88',  // primary UI green
+  ui2:    '#0cb566',  // primary UI green
   dim:   '#0c6c3f',  // dimmed green
   wh:    '#aaffcc',  // light text
-  muted: '#06453b',  // muted / inactive text
+  muted: '#fcfcfc',  // muted / inactive text
   // Player car colors: cyan, red, yellow, purple
   pc: ['#00ffff', '#ff3355', '#ffee00', '#cc44ff'],
   ai: '#005a9f',     // AI car color (dark blue-grey)
@@ -463,6 +464,50 @@ function updateCar(car, dt) {
   }
 }
 
+const CAR_RADIUS = 14;  // collision circle radius (cars are 22×12 px rectangles)
+
+/** Detects and resolves car-car collisions for all active cars. */
+function resolveCarCollisions() {
+  for (let i = 0; i < cars.length; i++) {
+    const a = cars[i];
+    if (a.done || a.dnf) continue;
+    for (let j = i + 1; j < cars.length; j++) {
+      const b = cars[j];
+      if (b.done || b.dnf) continue;
+
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist >= CAR_RADIUS * 2 || dist < 0.01) continue;
+
+      // Push cars apart so they no longer overlap
+      const overlap = CAR_RADIUS * 2 - dist;
+      const nx = dx / dist, ny = dy / dist;
+      a.x -= nx * overlap * 0.5;
+      a.y -= ny * overlap * 0.5;
+      b.x += nx * overlap * 0.5;
+      b.y += ny * overlap * 0.5;
+
+      // Velocity component along the collision normal for each car
+      const aN = a.speed * (Math.cos(a.angle) * nx + Math.sin(a.angle) * ny);
+      const bN = b.speed * (Math.cos(b.angle) * nx + Math.sin(b.angle) * ny);
+      if (aN - bN <= 0) continue;  // already separating — no impulse needed
+
+      // Elastic impulse (restitution 0.7 — slightly inelastic for a solid feel)
+      const imp = (aN - bN) * 0.85;
+
+      // Project impulse back onto each car's own heading axis
+      a.speed -= imp * (Math.cos(a.angle) * nx + Math.sin(a.angle) * ny);
+      b.speed += imp * (Math.cos(b.angle) * nx + Math.sin(b.angle) * ny);
+      a.speed = Math.max(-MAX_REVERSE, Math.min(MAX_SPEED, a.speed));
+      b.speed = Math.max(-MAX_REVERSE, Math.min(MAX_SPEED, b.speed));
+
+      // Trigger skid marks on both cars
+      a.skidTimer = 0; spawnSkid(a);
+      b.skidTimer = 0; spawnSkid(b);
+    }
+  }
+}
+
 function updateParticles(dt) {
   particles.forEach(p => {
     p.life -= dt;
@@ -711,30 +756,58 @@ function drawStart() {
   drawBg(); titlePulse += 0.04;
   const track = TRACKS[selectedTrack];
 
-  // Track fills the background — more visible than during the race overlay
-  ctx.save(); ctx.globalAlpha = 0.16;
-  drawTrack(track, 1); ctx.restore();
+  // ── Layout constants ──
+  const LEFT_W  = W * 0.4;           // 640px left column
+  const RIGHT_W = W - LEFT_W;        // 960px right column
+  const PAD     = 50;
+  const ROW_W   = LEFT_W - PAD * 2;  // 540px
+  const ROW_H   = 88;
+  const ROW_X   = PAD;
 
-  // Scrim so the UI text stays readable
-  ctx.fillStyle = 'rgba(0,6,14,0.58)'; ctx.fillRect(0, 0, W, H);
+  // Full-canvas scrim
+  ctx.fillStyle = 'rgba(0,6,14,0.55)'; ctx.fillRect(0, 0, W, H);
 
+  // ── Right column: isometric track preview ──
+  ctx.save();
+  ctx.beginPath(); ctx.rect(LEFT_W, 0, RIGHT_W, H); ctx.clip();
+
+  // Compute world-space bounding box to fit the track into the column
+  const xs = track.spline.map(p => p[0]);
+  const ys = track.spline.map(p => p[1]);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const tcx = (xmin + xmax) / 2, tcy = (ymin + ymax) / 2;
+  // Iso projects (worldW + worldH) world units onto the screen x axis
+  const worldSpan = (xmax - xmin) + (ymax - ymin);
+  const previewPad = 110;
+  const zoomX = (RIGHT_W - previewPad * 2) / (worldSpan * ISO_SCALE);
+  const zoomY = (H       - previewPad * 2) / (worldSpan * 0.5 * ISO_SCALE);
+  const previewZoom = Math.min(zoomX, zoomY, 1.2);
+
+  ctx.translate(LEFT_W + RIGHT_W / 2, H / 2);
+  ctx.transform(ISO_SCALE, 0.5 * ISO_SCALE, -ISO_SCALE, 0.5 * ISO_SCALE, 0, 0);
+  ctx.scale(previewZoom, previewZoom);
+  ctx.translate(-tcx, -tcy);
+  drawTrack(track, 0.88);
+  ctx.restore();
+
+  // Track name overlaid at the bottom of the right column (screen-space, outside iso)
+  const rcx = LEFT_W + RIGHT_W / 2;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = track.col; ctx.font = 'bold 30px Courier New';
+  ctx.shadowColor = track.col; ctx.shadowBlur = menuRow === 1 ? 22 : 12;
+  ctx.fillText(track.name, rcx, H - 112); ctx.shadowBlur = 0;
+  ctx.fillStyle = COLORS.muted; ctx.font = '16px Courier New';
+  ctx.fillText(track.sub + '  ·  ' + (selectedTrack + 1) + ' / ' + TRACKS.length, rcx, H - 82);
 
-  // ── Title ──
+  // ── Title (left column, top-left) ──
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   const glow = 18 + Math.sin(titlePulse) * 8;
   ctx.shadowColor = COLORS.ui; ctx.shadowBlur = glow;
   ctx.fillStyle = COLORS.ui; ctx.font = 'bold 52px Courier New';
-  ctx.fillText('MICRO RACERS', W / 2, 128); ctx.shadowBlur = 0;
-
-  // ── Selected track name (acts as the visual preview header) ──
-  ctx.fillStyle = track.col; ctx.font = 'bold 36px Courier New';
-  ctx.shadowColor = track.col; ctx.shadowBlur = menuRow === 1 ? 22 : 6;
-  ctx.fillText(track.name, W / 2, 234); ctx.shadowBlur = 0;
-  ctx.fillStyle = COLORS.muted; ctx.font = '17px Courier New';
-  ctx.fillText(track.sub + '  ·  ' + (selectedTrack + 1) + ' / ' + TRACKS.length, W / 2, 268);
+  ctx.fillText('MICRO  RACERS', ROW_X, 100); ctx.shadowBlur = 0;
 
   // ── Keyboard-navigable rows ──
-  const ROW_W = 720, ROW_H = 88, ROW_X = W / 2 - ROW_W / 2;
   const rowDefs = [
     { label: 'PLAYERS', value: numPlayers + (numPlayers === 1 ? ' PLAYER'  : ' PLAYERS') },
     { label: 'TRACK',   value: track.name },
@@ -742,43 +815,44 @@ function drawStart() {
   ];
 
   rowDefs.forEach((row, i) => {
-    const ry  = 322 + i * 108;
+    const ry  = 280 + i * 108;
     const rcy = ry + ROW_H / 2;
     const sel = menuRow === i;
 
-    // Row panel
-    ctx.fillStyle   = sel ? COLORS.ui + '1a' : '#000e1a';
-    ctx.strokeStyle = sel ? COLORS.ui        : '#002230';
+    ctx.save();
+    ctx.globalAlpha = sel ? 1 : 0.9;
+
+    ctx.fillStyle   = sel ? COLORS.ui + '1a' : COLORS.ui2 + '1a'
+    ctx.strokeStyle = sel ? COLORS.ui        : COLORS.ui2;
     ctx.lineWidth   = sel ? 2 : 1;
-    if (sel) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 14; }
     ctx.fillRect(ROW_X, ry, ROW_W, ROW_H);
     ctx.strokeRect(ROW_X, ry, ROW_W, ROW_H);
     ctx.shadowBlur = 0;
 
-    // Row label — left-aligned
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = sel ? COLORS.wh : COLORS.muted;
+    ctx.fillStyle = sel ? COLORS.ui : COLORS.ui2;
     ctx.font = '15px Courier New';
     ctx.fillText(row.label, ROW_X + 26, rcy);
 
-    // ← value → centred
     ctx.textAlign = 'center';
-    ctx.fillStyle = sel ? COLORS.ui : '#1e3a2a';
+    ctx.fillStyle = sel ? COLORS.ui : COLORS.ui2;
     ctx.font = (sel ? 'bold ' : '') + '28px Courier New';
-    ctx.fillText('←  ' + row.value + '  →', W / 2, rcy);
+    ctx.fillText('←  ' + row.value + '  →', ROW_X + ROW_W / 2, rcy);
+    ctx.restore();
   });
 
   // ── START RACE button ──
-  const sbW = ROW_W, sbH = ROW_H, sbX = ROW_X, sbY = 668;
-  const startHovered = inBox(mouse.x, mouse.y, sbX, sbY, sbW, sbH);
+  const sbY = 280 + 3 * 108 + 20;  // 20px gap after last row
+  const startHovered = inBox(mouse.x, mouse.y, ROW_X, sbY, ROW_W, ROW_H);
   const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
   ctx.shadowColor = COLORS.ui; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;
   ctx.fillStyle   = startHovered ? COLORS.ui : '#002a18';
   ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 2;
-  ctx.fillRect(sbX, sbY, sbW, sbH); ctx.strokeRect(sbX, sbY, sbW, sbH); ctx.shadowBlur = 0;
+  ctx.fillRect(ROW_X, sbY, ROW_W, ROW_H);
+  ctx.strokeRect(ROW_X, sbY, ROW_W, ROW_H); ctx.shadowBlur = 0;
   ctx.fillStyle = startHovered ? COLORS.bg : COLORS.ui;
   ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('▶  START RACE', sbX + sbW / 2, sbY + sbH / 2);
+  ctx.fillText('▶  START RACE', ROW_X + ROW_W / 2, sbY + ROW_H / 2);
   if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
 
   // ── Footer ──
@@ -967,6 +1041,7 @@ function loop(timestamp) {
   } else if (screen === 'race') {
     raceTime += dt;
     cars.forEach(c => updateCar(c, dt));
+    resolveCarCollisions();
     updateParticles(dt);
     updateCamera(dt);
 
