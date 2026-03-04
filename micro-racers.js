@@ -78,7 +78,43 @@ function buildEdges(spline) {
     leftEdge.push([spline[i][0] + nx * hw, spline[i][1] + ny * hw]);
     rightEdge.push([spline[i][0] - nx * hw, spline[i][1] - ny * hw]);
   }
+  clipEdgeFolds(leftEdge);
+  clipEdgeFolds(rightEdge);
   return { leftEdge, rightEdge };
+}
+
+// Collapses self-intersecting (folded) sections of an offset edge polyline.
+// When a sharp corner causes the inner edge to fold back on itself, this
+// detects the crossing and moves all intermediate points to the intersection.
+function clipEdgeFolds(pts) {
+  const n = pts.length;
+  const win = Math.min(20, Math.floor(n / 4));
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < n; i++) {
+      const a = pts[(i - 1 + n) % n];
+      const b = pts[i];
+      const d1x = b[0] - a[0], d1y = b[1] - a[1];
+      if (d1x * d1x + d1y * d1y < 1e-10) continue;
+      for (let gap = 1; gap <= win; gap++) {
+        const c = pts[(i + gap) % n];
+        const d = pts[(i + gap + 1) % n];
+        const d2x = d[0] - c[0], d2y = d[1] - c[1];
+        const den = d1x * d2y - d1y * d2x;
+        if (Math.abs(den) < 1e-10) continue;
+        const ex = c[0] - a[0], ey = c[1] - a[1];
+        const t = (ex * d2y - ey * d2x) / den;
+        const s = (ex * d1y - ey * d1x) / den;
+        if (t > 0 && t < 1 && s > 0 && s < 1) {
+          const ix = a[0] + t * d1x, iy = a[1] + t * d1y;
+          for (let m = 0; m <= gap; m++) {
+            const p = pts[(i + m) % n];
+            p[0] = ix; p[1] = iy;
+          }
+          break;
+        }
+      }
+    }
+  }
 }
 
 // ── TRACK DATA (pre-computed) ──────────────────────
