@@ -31,9 +31,9 @@ const COLORS = {
 
 /**
  * Generates a smooth closed Catmull-Rom spline through the control points.
- * @param {number[][]} pts - Array of [x, y] control points
+ * @param {number[][]} pts - Array of [x, y, w] control points (w = road width)
  * @param {number}     res - Number of output segments between each pair of points
- * @returns {number[][]} Dense array of [x, y] positions along the spline
+ * @returns {number[][]} Dense array of [x, y, w] positions along the spline
  */
 function buildSpline(pts, res) {
   res = res || 14;
@@ -47,22 +47,23 @@ function buildSpline(pts, res) {
     const p3 = pts[(i + 2) % numPts];
     for (let j = 0; j < res; j++) {
       const t = j / res, t2 = t * t, t3 = t2 * t;
-      // Standard Catmull-Rom matrix formula
-      out.push([
-        .5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-        .5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
-      ]);
+      // Standard Catmull-Rom matrix formula applied to x, y, and w
+      const cr = (c0, c1, c2, c3) =>
+        .5 * (2 * c1 + (-c0 + c2) * t + (2 * c0 - 5 * c1 + 4 * c2 - c3) * t2 + (-c0 + 3 * c1 - 3 * c2 + c3) * t3);
+      out.push([cr(p0[0], p1[0], p2[0], p3[0]),
+                cr(p0[1], p1[1], p2[1], p3[1]),
+                cr(p0[2], p1[2], p2[2], p3[2])]);
     }
   }
   return out;
 }
 
 /**
- * Extrudes a spline into left and right boundary edges at a given track width.
- * Uses the perpendicular normal at each spline point.
+ * Extrudes a spline into left and right boundary edges.
+ * Uses the per-point width stored in spline[i][2] (interpolated from control-point w values).
  * @returns {{ leftEdge: number[][], rightEdge: number[][] }}
  */
-function buildEdges(spline, trackWidth) {
+function buildEdges(spline) {
   const numPts = spline.length;
   const leftEdge = [], rightEdge = [];
   for (let i = 0; i < numPts; i++) {
@@ -73,17 +74,17 @@ function buildEdges(spline, trackWidth) {
     const len = Math.hypot(dx, dy) || 1;
     // Normal is 90° CCW from the tangent
     const nx = -dy / len, ny = dx / len;
-    leftEdge.push([spline[i][0] + nx * trackWidth * .5, spline[i][1] + ny * trackWidth * .5]);
-    rightEdge.push([spline[i][0] - nx * trackWidth * .5, spline[i][1] - ny * trackWidth * .5]);
+    const hw = spline[i][2] * .5;  // half-width at this spline point
+    leftEdge.push([spline[i][0] + nx * hw, spline[i][1] + ny * hw]);
+    rightEdge.push([spline[i][0] - nx * hw, spline[i][1] - ny * hw]);
   }
   return { leftEdge, rightEdge };
 }
 
 // ── TRACK DATA (pre-computed) ──────────────────────
-const TRACK_WIDTH = 72;  // road width in logical pixels; also used for on-track detection
 const TRACKS = TRACK_DEFS.map(def => {
   const spline = buildSpline(def.pts, 14);
-  const edges  = buildEdges(spline, TRACK_WIDTH);
+  const edges  = buildEdges(spline);
   // Pre-compute cumulative arc-lengths so trackProgress() can work in O(n) each frame
   const cumulativeLengths = [0];
   for (let i = 1; i < spline.length; i++)
@@ -107,15 +108,26 @@ function distToSegment(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
-/** Returns the minimum distance from (x, y) to the track centerline. */
-function nearestTrackDist(x, y, track) {
+/**
+ * Returns the minimum distance from (x, y) to the track centerline and the
+ * interpolated road width at the nearest point.
+ */
+function nearestTrackPoint(x, y, track) {
   const spline = track.spline;
-  let minDist = Infinity;
+  let minDist = Infinity, nearWidth = 72;
   for (let i = 0; i < spline.length; i++) {
     const j = (i + 1) % spline.length;
-    minDist = Math.min(minDist, distToSegment(x, y, spline[i][0], spline[i][1], spline[j][0], spline[j][1]));
+    const d = distToSegment(x, y, spline[i][0], spline[i][1], spline[j][0], spline[j][1]);
+    if (d < minDist) {
+      minDist = d;
+      // Interpolate width between the two segment endpoints
+      const dx = spline[j][0] - spline[i][0], dy = spline[j][1] - spline[i][1];
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq ? Math.max(0, Math.min(1, ((x - spline[i][0]) * dx + (y - spline[i][1]) * dy) / lenSq)) : 0;
+      nearWidth = spline[i][2] + t * (spline[j][2] - spline[i][2]);
+    }
   }
-  return minDist;
+  return { dist: minDist, width: nearWidth };
 }
 
 /**
@@ -156,17 +168,37 @@ function inBox(mx, my, x, y, w, h) {
 // ── INPUT ─────────────────────────────────────────
 const keys = {};  // set of currently-held keyboard keys
 document.addEventListener('keydown', e => {
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Backspace','/','Enter'].includes(e.key)) e.preventDefault();
   keys[e.key] = true;
+
+  if (screen === 'start') {
+    const playerCounts = [1, 2, 3, 4];
+    if (e.key === 'ArrowUp')   menuRow = (menuRow - 1 + 3) % 3;
+    if (e.key === 'ArrowDown') menuRow = (menuRow + 1) % 3;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const dir = e.key === 'ArrowLeft' ? -1 : 1;
+      if (menuRow === 0) {
+        const idx = playerCounts.indexOf(numPlayers);
+        numPlayers = playerCounts[(idx + dir + playerCounts.length) % playerCounts.length];
+      } else if (menuRow === 1) {
+        selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
+      } else {
+        LAPS = Math.max(1, Math.min(9, LAPS + dir));
+      }
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown';
+    }
+  }
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
 // Keyboard bindings for each of the four player slots
 const CONTROLS = [
-  { up: 'ArrowUp', dn: 'ArrowDown',  lt: 'ArrowLeft', rt: 'ArrowRight' }, // P1: arrow keys
-  { up: 'w',       dn: 's',          lt: 'a',         rt: 'd'          }, // P2: WASD
-  { up: 'i',       dn: 'k',          lt: 'j',         rt: 'l'          }, // P3: IJKL
-  { up: '8',       dn: '2',          lt: '4',         rt: '6'          }, // P4: numpad
+  { up: 'ArrowUp', dn: 'ArrowDown', lt: 'ArrowLeft', rt: 'ArrowRight', give: 'Backspace', honk: '-'  }, // P1: arrows
+  { up: 'w',       dn: 's',         lt: 'a',          rt: 'd',         give: 'q',         honk: 'e'  }, // P2: WASD
+  { up: 'i',       dn: 'k',         lt: 'j',          rt: 'l',         give: 'u',         honk: 'o'  }, // P3: IJKL
+  { up: '8',       dn: '2',         lt: '4',          rt: '6',         give: '5',         honk: '0'  }, // P4: numpad
 ];
 
 // Mouse position tracked in logical canvas coordinates
@@ -193,9 +225,13 @@ let raceTime      = 0;        // total elapsed race time in seconds
 let countdownNum  = 3;        // current countdown digit shown (3 → 2 → 1 → GO!)
 let countdownTime = 0;        // how far through the current 1-second tick (0–1)
 let particles     = [];       // active particle objects
-const LAPS        = 1;        // number of laps per race
+let LAPS          = 1;        // number of laps per race (user-selectable)
 let titlePulse    = 0;        // animation clock for the title-screen glow
 let resultsCooldown = 0;      // seconds before results buttons become clickable
+let menuRow       = 0;        // which start-screen row is selected (0–2)
+// Race-end timing for the three win conditions
+let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
+let allOutAt            = -1; // raceTime when all cars became done or dnf
 
 // ── ISOMETRIC CAMERA ──────────────────────────────
 const ISO_SCALE = Math.SQRT1_2;  // cos45 = sin45 = 1/√2
@@ -238,15 +274,16 @@ function makeCar(id, isAI, color) {
     canCountLap:  false,   // must cross halfway before the finish line counts
     aiTarget:     (startIdx + 10) % spline.length,  // next waypoint for the AI
     onTrack:      true,
-    done: false, finishTime: 0,
+    done: false, dnf: false, finishTime: 0,
     label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
-    skidTimer: 0,
+    skidTimer: 0, honkCooldown: 0,
     lapStart: 0, bestLap: Infinity,
   };
 }
 
 function initRace() {
   cars = []; finishOrder = []; raceTime = 0; particles = [];
+  allHumansFinishedAt = -1; allOutAt = -1;
   for (let i = 0; i < 4; i++)
     cars.push(makeCar(i, i >= numPlayers, i < numPlayers ? COLORS.pc[i] : COLORS.ai));
   camera.x = cars.reduce((s, c) => s + c.x, 0) / cars.length;
@@ -277,11 +314,16 @@ function spawnBurst(x, y, color) {
   }
 }
 
+/** Emits an expanding ring beacon when a player honks. */
+function spawnHonk(x, y, color) {
+  particles.push({ x, y, life: 0.65, maxLife: 0.65, type: 'honk', color });
+}
+
 // ── CAR PHYSICS ───────────────────────────────────
 
 /** Advances a single car's physics and AI/input state by dt seconds. */
 function updateCar(car, dt) {
-  if (car.done) return;
+  if (car.done || car.dnf) return;
   const track = TRACKS[selectedTrack];
 
   // ── Input ──────────────────────────────────────
@@ -303,6 +345,18 @@ function updateCar(car, dt) {
     const ctrl = CONTROLS[car.id];
     car.throttle = keys[ctrl.up] ? 1 : (keys[ctrl.dn] ? -1 : 0);
     car.steering = keys[ctrl.lt] ? -1 : (keys[ctrl.rt] ? 1 : 0);
+    // Give up — retire from the race
+    if (keys[ctrl.give]) {
+      car.dnf = true;
+      spawnBurst(car.x, car.y, car.color);
+      return;
+    }
+    // Honk / beacon
+    if (car.honkCooldown > 0) car.honkCooldown -= dt;
+    if (keys[ctrl.honk] && car.honkCooldown <= 0) {
+      car.honkCooldown = 0.5;
+      spawnHonk(car.x, car.y, car.color);
+    }
   }
 
   // ── Speed update ───────────────────────────────
@@ -331,7 +385,8 @@ function updateCar(car, dt) {
   car.y = Math.max(6, Math.min(H - 6, car.y));
 
   // ── Off-track detection ────────────────────────
-  car.onTrack = nearestTrackDist(car.x, car.y, track) < TRACK_WIDTH / 2 + 3;
+  const { dist: trackDist, width: localWidth } = nearestTrackPoint(car.x, car.y, track);
+  car.onTrack = trackDist < localWidth / 2 + 3;
   if (!car.onTrack) {
     // Exponential speed decay: ~85% speed retained per second of off-track driving
     car.speed *= Math.pow(0.85, 60 * dt);
@@ -351,10 +406,8 @@ function updateCar(car, dt) {
 
   // 2. ONLY use this block to handle lap increments
   if (car.canCountLap && car.lastProgress > 0.86 && car.progress < 0.14 && car.speed > 8) {
-    if (car.laps > 0) {
-      const lapTime = raceTime - car.lapStart;
-      if (lapTime < car.bestLap) car.bestLap = lapTime;
-    }
+    const lapTime = raceTime - car.lapStart;
+    if (lapTime < car.bestLap) car.bestLap = lapTime;
     car.lapStart = raceTime;
     car.laps++;
     // Reset flag so they must loop all the way around again
@@ -451,6 +504,14 @@ function drawParticles() {
     if (p.type === 'burst') {
       ctx.fillStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 6;
       ctx.beginPath(); ctx.arc(p.x, p.y, 3 * fadeAlpha, 0, Math.PI * 2); ctx.fill();
+    } else if (p.type === 'honk') {
+      const t = 1 - p.life / p.maxLife;  // 0 → 1 as particle ages
+      const radius = t * 70;
+      ctx.strokeStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 8; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, radius, 0, Math.PI * 2); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.fillStyle = p.color; ctx.font = 'bold 13px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('HONK', p.x, p.y - radius * 0.55);
     } else {
       // Skid marks: hollow ring that fades out in place
       ctx.strokeStyle = p.color + '44'; ctx.lineWidth = 3;
@@ -569,8 +630,8 @@ function drawHUD() {
     ctx.fillStyle = car.color; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
     ctx.fillText((i + 1) + '. ' + car.label, x, 10);
     ctx.font = '16px Courier New';
-    ctx.fillStyle = car.done ? COLORS.ui : COLORS.wh;
-    ctx.fillText(car.done ? '✓ DONE' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS, x, 22);
+    ctx.fillStyle = car.done ? COLORS.ui : car.dnf ? '#ff6644' : COLORS.wh;
+    ctx.fillText(car.done ? '✓ DONE' : car.dnf ? '✗ OUT' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS, x, 22);
   });
 
   // Speedometer bars along the bottom, one per human player
@@ -583,151 +644,116 @@ function drawHUD() {
     ctx.fillStyle = speedPercent > 0.8 ? '#ff4444' : speedPercent > 0.5 ? '#ffee00' : car.color;
     ctx.fillRect(barX, barY, barW * speedPercent, barH);
     ctx.strokeStyle = car.color + '44'; ctx.lineWidth = 0.8; ctx.strokeRect(barX, barY, barW, barH);
-    ctx.fillStyle = car.color; ctx.font = '14px Courier New'; ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(car.label + '  ' + Math.abs(Math.round(car.speed)), barX, barY - 1);
+    ctx.fillStyle = car.done ? COLORS.ui : car.dnf ? '#ff4444' : car.color;
+    ctx.font = '14px Courier New'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    const statusLabel = car.done ? 'FINISHED' : car.dnf ? 'RETIRED' : Math.abs(Math.round(car.speed));
+    ctx.fillText(car.label + '  ' + statusLabel, barX, barY - 1);
     ctx.textBaseline = 'alphabetic';
   });
-}
 
-/** Draws a styled button with active/hover visual states. */
-function drawBtn(label, x, y, w, h, isActive, isHovered) {
-  ctx.save();
-  ctx.fillStyle   = isActive ? COLORS.ui + '33' : isHovered ? COLORS.ui + '18' : '#001820';
-  ctx.strokeStyle = isActive ? COLORS.ui : isHovered ? COLORS.ui + '88' : '#004433';
-  ctx.lineWidth = isActive ? 2 : 1;
-  if (isActive || isHovered) {
-    ctx.shadowColor = isActive ? COLORS.ui : COLORS.ui + '66';
-    ctx.shadowBlur  = isActive ? 10 : 4;
+  // Race-end countdown banners
+  if (allHumansFinishedAt >= 0 && allOutAt < 0) {
+    const remaining = 10 - (raceTime - allHumansFinishedAt);
+    if (remaining > 0) {
+      ctx.fillStyle = COLORS.ui; ctx.font = 'bold 18px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText('AI FINISHES IN  ' + remaining.toFixed(1) + 's', W / 2, H - 6);
+    }
+  } else if (allOutAt >= 0) {
+    const remaining = 5 - (raceTime - allOutAt);
+    if (remaining > 0) {
+      ctx.fillStyle = '#ff6644'; ctx.font = 'bold 18px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText('RESULTS IN  ' + remaining.toFixed(1) + 's', W / 2, H - 6);
+    }
   }
-  ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); ctx.shadowBlur = 0;
-  ctx.fillStyle = isActive ? COLORS.ui : isHovered ? COLORS.wh : COLORS.muted;
-  ctx.font = (isActive ? 'bold ' : '') + ' 20px Courier New';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(label, x + w / 2, y + h / 2);
-  ctx.restore();
-}
-
-/** Draws a thumbnail preview of a track layout (used on the track selection screen). */
-function miniTrack(track, centerX, centerY, size, isActive) {
-  const pts = track.pts;
-  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const trackW = maxX - minX, trackH = maxY - minY;
-  // Uniform scale so the whole track fits inside the preview box
-  const scale   = (size - 20) / Math.max(trackW, trackH, 1);
-  const offsetX = -(minX + trackW / 2) * scale;
-  const offsetY = -(minY + trackH / 2) * scale;
-  ctx.save(); ctx.translate(centerX, centerY);
-  if (isActive) { ctx.shadowColor = track.col; ctx.shadowBlur = 12; }
-  ctx.strokeStyle = isActive ? track.col : '#1a4055';
-  ctx.lineWidth = isActive ? 3 : 1.5; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  pts.forEach((p, i) => {
-    i === 0
-      ? ctx.moveTo(p[0] * scale + offsetX, p[1] * scale + offsetY)
-      : ctx.lineTo(p[0] * scale + offsetX, p[1] * scale + offsetY);
-  });
-  ctx.closePath(); ctx.stroke(); ctx.shadowBlur = 0;
-  // Small start/finish line indicator perpendicular to the first segment
-  const p0 = pts[0];
-  const sfAngle = Math.atan2(pts[1][1] - p0[1], pts[1][0] - p0[0]) + Math.PI / 2;
-  ctx.strokeStyle = isActive ? '#ffffff' : '#334455'; ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(p0[0] * scale + offsetX + Math.cos(sfAngle) * 6, p0[1] * scale + offsetY + Math.sin(sfAngle) * 6);
-  ctx.lineTo(p0[0] * scale + offsetX - Math.cos(sfAngle) * 6, p0[1] * scale + offsetY - Math.sin(sfAngle) * 6);
-  ctx.stroke(); ctx.restore();
 }
 
 // ── SCREENS ───────────────────────────────────────
 
 function drawStart() {
   drawBg(); titlePulse += 0.04;
-  // Faint ghost of the selected track as a background texture
-  ctx.save(); ctx.globalAlpha = 0.07;
-  drawTrack(TRACKS[selectedTrack], 1); ctx.restore();
+  const track = TRACKS[selectedTrack];
 
-  ctx.textBaseline = 'alphabetic';
+  // Track fills the background — more visible than during the race overlay
+  ctx.save(); ctx.globalAlpha = 0.16;
+  drawTrack(track, 1); ctx.restore();
 
-  // Pulsing neon title
+  // Scrim so the UI text stays readable
+  ctx.fillStyle = 'rgba(0,6,14,0.58)'; ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  // ── Title ──
   const glow = 18 + Math.sin(titlePulse) * 8;
-  ctx.textAlign = 'center'; ctx.shadowColor = COLORS.ui; ctx.shadowBlur = glow;
-  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 48px Courier New';
-  ctx.fillText('MICRO RACERS', W / 2, 66); ctx.shadowBlur = 0;
+  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = glow;
+  ctx.fillStyle = COLORS.ui; ctx.font = 'bold 52px Courier New';
+  ctx.fillText('MICRO RACERS', W / 2, 128); ctx.shadowBlur = 0;
 
-  // ── Player count selector ──
-  ctx.fillStyle = COLORS.wh; ctx.font = '20px Courier New'; ctx.textAlign = 'center';
-  ctx.fillText('NUMBER OF PLAYERS', W / 2, 120);
-  const playerOptions = [{ n: 1, l: '1 PLAYER' }, { n: 2, l: '2 PLAYERS' }, { n: 4, l: '4 PLAYERS' }];
-  const btnW = 256, btnH = 68, btnGap = 28;
-  const btnStartX = (W - (3 * btnW + 2 * btnGap)) / 2;
-  playerOptions.forEach((opt, i) => {
-    const bx = btnStartX + i * (btnW + btnGap), by = 144;
-    const isActive  = numPlayers === opt.n;
-    const isHovered = inBox(mouse.x, mouse.y, bx, by, btnW, btnH);
-    drawBtn(opt.l, bx, by, btnW, btnH, isActive, isHovered);
-    if (mouse.click && isHovered) numPlayers = opt.n;
-  });
+  // ── Selected track name (acts as the visual preview header) ──
+  ctx.fillStyle = track.col; ctx.font = 'bold 36px Courier New';
+  ctx.shadowColor = track.col; ctx.shadowBlur = menuRow === 1 ? 22 : 6;
+  ctx.fillText(track.name, W / 2, 234); ctx.shadowBlur = 0;
+  ctx.fillStyle = COLORS.muted; ctx.font = '17px Courier New';
+  ctx.fillText(track.sub + '  ·  ' + (selectedTrack + 1) + ' / ' + TRACKS.length, W / 2, 268);
 
-  // ── Track selector cards ──
-  ctx.fillStyle = COLORS.wh; ctx.font = '20px Courier New';
-  ctx.fillText('SELECT TRACK', W / 2, 260);
-  const cardW = 188, cardH = 144, cardGap = 14;
-  const totalCardsW = 3 * cardW + 2 * cardGap;
-  const cardStartX  = (W - totalCardsW) / 2;
-  TRACKS.forEach((track, i) => {
-    const cx = cardStartX + i * (cardW + cardGap), cy = 280;
-    const isActive  = selectedTrack === i;
-    const isHovered = inBox(mouse.x, mouse.y, cx, cy, cardW, cardH);
-    ctx.fillStyle   = isActive ? track.col + '22' : isHovered ? '#001c2e' : '#000e1a';
-    ctx.strokeStyle = isActive ? track.col : isHovered ? '#224433' : '#002230';
-    ctx.lineWidth   = isActive ? 2 : 1;
-    if (isActive) { ctx.shadowColor = track.col; ctx.shadowBlur = 10; }
-    ctx.fillRect(cx, cy, cardW, cardH); ctx.strokeRect(cx, cy, cardW, cardH); ctx.shadowBlur = 0;
-    miniTrack(track, cx + cardW / 2, cy + cardH / 2 - 10, cardW - 20, isActive);
-    ctx.textAlign   = 'center';
-    ctx.fillStyle   = isActive ? track.col : isHovered ? COLORS.wh : '#336655';
-    ctx.font        = (isActive ? 'bold ' : '') + ' 20px Courier New';
-    ctx.fillText(track.name, cx + cardW / 2, cy + cardH - 22);
-    ctx.fillStyle = isActive ? COLORS.wh : '#334444'; ctx.font = '8px Courier New';
-    ctx.fillText(track.sub, cx + cardW / 2, cy + cardH - 10);
-    if (mouse.click && isHovered) selectedTrack = i;
+  // ── Keyboard-navigable rows ──
+  const ROW_W = 720, ROW_H = 88, ROW_X = W / 2 - ROW_W / 2;
+  const rowDefs = [
+    { label: 'PLAYERS', value: numPlayers + (numPlayers === 1 ? ' PLAYER'  : ' PLAYERS') },
+    { label: 'TRACK',   value: track.name },
+    { label: 'LAPS',    value: LAPS       + (LAPS       === 1 ? ' LAP'     : ' LAPS')    },
+  ];
+
+  rowDefs.forEach((row, i) => {
+    const ry  = 322 + i * 108;
+    const rcy = ry + ROW_H / 2;
+    const sel = menuRow === i;
+
+    // Row panel
+    ctx.fillStyle   = sel ? COLORS.ui + '1a' : '#000e1a';
+    ctx.strokeStyle = sel ? COLORS.ui        : '#002230';
+    ctx.lineWidth   = sel ? 2 : 1;
+    if (sel) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 14; }
+    ctx.fillRect(ROW_X, ry, ROW_W, ROW_H);
+    ctx.strokeRect(ROW_X, ry, ROW_W, ROW_H);
+    ctx.shadowBlur = 0;
+
+    // Row label — left-aligned
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = sel ? COLORS.wh : COLORS.muted;
+    ctx.font = '15px Courier New';
+    ctx.fillText(row.label, ROW_X + 26, rcy);
+
+    // ← value → centred
+    ctx.textAlign = 'center';
+    ctx.fillStyle = sel ? COLORS.ui : '#1e3a2a';
+    ctx.font = (sel ? 'bold ' : '') + '28px Courier New';
+    ctx.fillText('←  ' + row.value + '  →', W / 2, rcy);
   });
 
   // ── START RACE button ──
-  const startBtnW = 420, startBtnH = 96;
-  const startBtnX = (W - startBtnW) / 2, startBtnY = 868;
-  const startHovered = inBox(mouse.x, mouse.y, startBtnX, startBtnY, startBtnW, startBtnH);
+  const sbW = 420, sbH = 88, sbX = W / 2 - sbW / 2, sbY = 668;
+  const startHovered = inBox(mouse.x, mouse.y, sbX, sbY, sbW, sbH);
   const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
-  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = startHovered ? 30 : 12 * pulse;
+  ctx.shadowColor = COLORS.ui; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;
   ctx.fillStyle   = startHovered ? COLORS.ui : '#002a18';
   ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 2;
-  ctx.fillRect(startBtnX, startBtnY, startBtnW, startBtnH);
-  ctx.strokeRect(startBtnX, startBtnY, startBtnW, startBtnH); ctx.shadowBlur = 0;
+  ctx.fillRect(sbX, sbY, sbW, sbH); ctx.strokeRect(sbX, sbY, sbW, sbH); ctx.shadowBlur = 0;
   ctx.fillStyle = startHovered ? COLORS.bg : COLORS.ui;
   ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('▶  START RACE', startBtnX + startBtnW / 2, startBtnY + startBtnH / 2);
-  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('▶  START RACE', sbX + sbW / 2, sbY + sbH / 2);
   if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
 
-  // ── Footer: keyboard reference ──
-  ctx.fillStyle = 'rgba(0,10,20,0.9)'; ctx.fillRect(0, H - 58, W, 58);
+  // ── Footer ──
+  ctx.fillStyle = 'rgba(0,10,20,0.92)'; ctx.fillRect(0, H - 62, W, 62);
   ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, H - 58); ctx.lineTo(W, H - 58); ctx.stroke();
-  ctx.fillStyle = '#003828'; ctx.font = '16px Courier New'; ctx.textAlign = 'center';
-  ctx.fillText('KEYBOARD — ALL PLAYERS SHARE ONE KEYBOARD', W / 2, H - 44);
-  const ctrlGuide = [
-    { l: 'P1', k: '↑  ↓  ←  →' }, { l: 'P2', k: 'W  A  S  D' },
-    { l: 'P3', k: 'I  J  K  L' }, { l: 'P4', k: 'NUM 8 4 2 6' },
-  ];
-  ctrlGuide.forEach((c, i) => {
-    const x = 80 + i * 166;
-    ctx.fillStyle = COLORS.pc[i]; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
-    ctx.fillText(c.l, x, H - 54);
-    ctx.fillStyle = COLORS.wh; ctx.font = '18px Courier New';
-    ctx.fillText(c.k, x, H - 26);
-  });
+  ctx.beginPath(); ctx.moveTo(0, H - 62); ctx.lineTo(W, H - 62); ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#004433'; ctx.font = '15px Courier New';
+  ctx.fillText('MENU   ↑↓ ROW   ←→ CHANGE   ENTER START', W / 2, H - 42);
+  ctx.fillStyle = '#002a20'; ctx.font = '13px Courier New';
+  ctx.fillText('IN RACE   P1 ↑↓←→   P2 WASD   P3 IJKL   P4 NUM8426   BKSP/Q/U/5 RETIRE   -/E/O/0 HONK', W / 2, H - 16);
 }
 
 function drawCountdown() {
@@ -748,94 +774,137 @@ function drawCountdown() {
   if (countdownNum > 0) ctx.fillText('GET READY  ·  ' + LAPS + ' LAPS', W / 2, H / 2 + 90);
 }
 
+// Layout constants shared between drawResults and the click handler
+const RES = {
+  tableW:   800,
+  get tableX() { return W / 2 - this.tableW / 2; },  // 400
+  COL: { pos: 0, driver: 90, time: 330, lap: 530, prog: 690 },
+  progBarW: 110,
+  rowH:     178,
+  headerY:  108,   // top of the column-label row
+  get rowsY()  { return this.headerY + 22; },  // top of first data row
+  btnW: 198, btnH: 44,
+  get btnY()   { return this.rowsY + 4 * this.rowH + 30; },
+};
+
 function drawResults() {
   drawBg(); drawTrack(TRACKS[selectedTrack], 0.18); drawParticles();
   ctx.fillStyle = 'rgba(0,6,14,0.92)'; ctx.fillRect(0, 0, W, H);
   const track = TRACKS[selectedTrack];
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+
+  // ── Title ──────────────────────────────────────
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 22;
   ctx.fillStyle = COLORS.ui; ctx.font = 'bold 38px Courier New';
-  ctx.fillText('RACE COMPLETE', W / 2, 70); ctx.shadowBlur = 0;
+  ctx.fillText('RACE COMPLETE', W / 2, 52); ctx.shadowBlur = 0;
   ctx.fillStyle = track.col; ctx.font = '18px Courier New';
-  ctx.fillText(track.name + '  ·  ' + track.sub + '  ·  ' + LAPS + ' LAPS', W / 2, 92);
+  ctx.fillText(track.name + '  ·  ' + track.sub + '  ·  ' + LAPS + ' LAP' + (LAPS > 1 ? 'S' : ''), W / 2, 78);
   ctx.strokeStyle = '#002530'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(50, 102); ctx.lineTo(W - 50, 102); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(50, 92); ctx.lineTo(W - 50, 92); ctx.stroke();
 
-  // Table headers
-  const tableX = W / 2 - 270;
-  ctx.textAlign = 'left'; ctx.fillStyle = '#004433'; ctx.font = '16px Courier New';
-  ['POS', 'DRIVER', 'FINISH TIME', 'BEST LAP', 'PROGRESS'].forEach((header, i) => {
-    ctx.fillText(header, tableX + [0, 62, 196, 330, 430][i], 120);
+  // ── Column headers ──────────────────────────────
+  const { tableX, tableW, COL, progBarW, rowH, headerY, rowsY, btnY, btnW, btnH } = RES;
+  ctx.textBaseline = 'middle'; ctx.fillStyle = '#004433'; ctx.font = '14px Courier New';
+  [['POS', COL.pos + 45, 'center'], ['DRIVER', COL.driver, 'left'],
+   ['FINISH TIME', COL.time, 'left'], ['BEST LAP', COL.lap, 'left'],
+   ['PROGRESS', COL.prog, 'left']].forEach(([label, cx, align]) => {
+    ctx.textAlign = align;
+    ctx.fillText(label, tableX + cx, headerY + 10);
   });
   ctx.strokeStyle = '#003322'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(tableX, 126); ctx.lineTo(W / 2 + 270, 126); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tableX, rowsY); ctx.lineTo(tableX + tableW, rowsY); ctx.stroke();
 
-  // Sort: finishers first (ordered by finish time via finishOrder), then DNFs by progress
+  // ── Sort ────────────────────────────────────────
   const sorted = [...cars].sort((a, b) => {
     if (a.done !== b.done) return a.done ? -1 : 1;
+    if (a.done && b.done) return a.finishTime - b.finishTime;
     return (b.laps + b.progress) - (a.laps + a.progress);
   });
+
   const medals = ['1ST', '2ND', '3RD', '4TH'];
   sorted.forEach((car, i) => {
-    const rowY     = 148 + i * 74;
+    const rowY  = rowsY + i * rowH;
+    const rowCY = rowY + rowH / 2;
     const isWinner = i === 0;
-    // Highlight the winner row with a coloured background panel
-    if (isWinner) {
-      ctx.fillStyle   = car.color + '18'; ctx.fillRect(tableX - 8, rowY - 14, 556, 52);
-      ctx.strokeStyle = car.color + '44'; ctx.lineWidth = 1; ctx.strokeRect(tableX - 8, rowY - 14, 556, 52);
-    }
-    ctx.fillStyle = car.color; ctx.font = (isWinner ? 'bold 28' : '24') + 'px Courier New';
-    ctx.textAlign = 'center'; ctx.fillText(medals[i], tableX + 24, rowY + 4);
-    ctx.textAlign = 'left'; ctx.fillStyle = car.color;
-    ctx.font = (isWinner ? 'bold 36' : '26') + 'px Courier New';
-    ctx.fillText(car.label, tableX + 62, rowY + 4);
-    ctx.fillStyle = '#334444'; ctx.font = '14px Courier New';
-    ctx.fillText(car.isAI ? 'AI' : 'HUMAN', tableX + 62, rowY + 16);
-    ctx.font = (isWinner ? 'bold 26' : '22') + 'px Courier New';
-    ctx.fillStyle = car.done ? COLORS.wh : '#445566';
-    ctx.fillText(car.done ? formatTime(car.finishTime) : 'DNF — L' + (car.laps + 1) + '/' + LAPS, tableX + 196, rowY + 4);
-    ctx.fillStyle = '#668877'; ctx.font = '20px Courier New';
-    ctx.fillText(car.bestLap < Infinity ? formatTime(car.bestLap) : '—', tableX + 330, rowY + 4);
 
-    // Progress bar showing total laps completed (divided into per-lap segments)
-    const barW = 196, barH = 8;
-    const barX = tableX + 430, barY = rowY - 4;
+    // Row background / divider
+    if (isWinner) {
+      ctx.fillStyle   = car.color + '14'; ctx.fillRect(tableX, rowY, tableW, rowH);
+      ctx.strokeStyle = car.color + '33'; ctx.lineWidth = 1; ctx.strokeRect(tableX, rowY, tableW, rowH);
+    } else {
+      ctx.strokeStyle = '#001e28'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tableX, rowY); ctx.lineTo(tableX + tableW, rowY); ctx.stroke();
+    }
+
+    // POS medal — centred in its column
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = car.color;
+    ctx.font = (isWinner ? 'bold 30' : 'bold 22') + 'px Courier New';
+    ctx.fillText(medals[i], tableX + COL.pos + 45, rowCY);
+
+    // Driver name + type tag
+    ctx.textAlign = 'left';
+    ctx.fillStyle = car.color;
+    ctx.font = (isWinner ? 'bold 32' : '26') + 'px Courier New';
+    ctx.fillText(car.label, tableX + COL.driver, rowCY - 14);
+    ctx.fillStyle = '#2a4455'; ctx.font = '14px Courier New';
+    ctx.fillText(car.isAI ? 'AI' : 'HUMAN', tableX + COL.driver, rowCY + 14);
+
+    // Finish time or status
+    const resultText = car.done ? formatTime(car.finishTime) : car.dnf ? 'RETIRED' : 'DNF';
+    ctx.fillStyle = car.done ? COLORS.wh : '#445566';
+    ctx.font = (isWinner ? 'bold 28' : '22') + 'px Courier New';
+    ctx.fillText(resultText, tableX + COL.time, rowCY - 12);
+    if (car.done) {
+      ctx.fillStyle = '#2a4455'; ctx.font = '14px Courier New';
+      ctx.fillText('FINISH TIME', tableX + COL.time, rowCY + 12);
+    }
+
+    // Best lap
+    const lapText = car.bestLap < Infinity ? formatTime(car.bestLap) : '—';
+    ctx.fillStyle = '#668877'; ctx.font = '22px Courier New';
+    ctx.fillText(lapText, tableX + COL.lap, rowCY - 12);
+    ctx.fillStyle = '#2a4455'; ctx.font = '14px Courier New';
+    ctx.fillText('BEST LAP', tableX + COL.lap, rowCY + 12);
+
+    // Progress bar
+    const barX = tableX + COL.prog;
+    const barH = 10, barY = rowCY - barH / 2;
     const progressPct = Math.min(1, (car.laps + car.progress) / LAPS);
-    ctx.fillStyle = '#001520'; ctx.fillRect(barX, barY, barW, barH);
-    const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    ctx.fillStyle = '#001520'; ctx.fillRect(barX, barY, progBarW, barH);
+    const grad = ctx.createLinearGradient(barX, 0, barX + progBarW, 0);
     grad.addColorStop(0, car.color + '88'); grad.addColorStop(1, car.color);
-    ctx.fillStyle = grad; ctx.fillRect(barX, barY, barW * progressPct, barH);
+    ctx.fillStyle = grad; ctx.fillRect(barX, barY, progBarW * progressPct, barH);
     for (let l = 1; l < LAPS; l++) {
       ctx.fillStyle = '#002535';
-      ctx.fillRect(barX + barW / LAPS * l - .5, barY, 1, barH);
+      ctx.fillRect(barX + progBarW / LAPS * l - .5, barY, 1, barH);
     }
-    ctx.strokeStyle = car.color + '55'; ctx.lineWidth = 1; ctx.strokeRect(barX, barY, barW, barH);
-    ctx.fillStyle = car.color + '88'; ctx.font = '14px Courier New'; ctx.textAlign = 'left';
-    ctx.fillText(Math.round(progressPct * 100) + '%', barX + barW * progressPct + 3, barY + barH - 1);
+    ctx.strokeStyle = car.color + '55'; ctx.lineWidth = 1; ctx.strokeRect(barX, barY, progBarW, barH);
+    ctx.fillStyle = car.color; ctx.font = '15px Courier New'; ctx.textAlign = 'left';
+    ctx.fillText(Math.round(progressPct * 100) + '%', barX, rowCY + 16);
   });
 
-  // Bottom action buttons
+  // ── Buttons ─────────────────────────────────────
   const resultBtns = [
-    { l: '▶  RACE AGAIN',   x: W / 2 - 220, fn: () => { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; } },
-    { l: '◀  CHANGE TRACK', x: W / 2 + 14,  fn: () => { screen = 'start'; } },
+    { l: '▶  RACE AGAIN',   x: W / 2 - 220 },
+    { l: '◀  CHANGE TRACK', x: W / 2 + 14  },
   ];
   const btnsReady = resultsCooldown <= 0;
-  ctx.save();
-  ctx.globalAlpha = btnsReady ? 1 : 0.35;
+  ctx.save(); ctx.globalAlpha = btnsReady ? 1 : 0.35;
   resultBtns.forEach(btn => {
-    const bw = 198, bh = 40, by = H - 60;
-    const isHovered = btnsReady && inBox(mouse.x, mouse.y, btn.x, by, bw, bh);
+    const isHovered = btnsReady && inBox(mouse.x, mouse.y, btn.x, btnY, btnW, btnH);
     ctx.fillStyle   = isHovered ? COLORS.ui : '#001c2a';
     ctx.strokeStyle = COLORS.ui; ctx.lineWidth = 1.5;
     if (isHovered) { ctx.shadowColor = COLORS.ui; ctx.shadowBlur = 12; }
-    ctx.fillRect(btn.x, by, bw, bh); ctx.strokeRect(btn.x, by, bw, bh); ctx.shadowBlur = 0;
+    ctx.fillRect(btn.x, btnY, btnW, btnH); ctx.strokeRect(btn.x, btnY, btnW, btnH); ctx.shadowBlur = 0;
     ctx.fillStyle = isHovered ? COLORS.bg : COLORS.ui;
     ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(btn.l, btn.x + bw / 2, by + bh / 2);
+    ctx.fillText(btn.l, btn.x + btnW / 2, btnY + btnH / 2);
   });
   ctx.restore();
-  ctx.fillStyle = '#223344'; ctx.font = '16px Courier New'; ctx.textAlign = 'center';
-  ctx.fillText('TOTAL ELAPSED  ' + formatTime(raceTime), W / 2, H - 8);
+  ctx.fillStyle = '#223344'; ctx.font = '16px Courier New';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('TOTAL ELAPSED  ' + formatTime(raceTime), W / 2, btnY + btnH + 22);
 }
 
 // ── MAIN LOOP ─────────────────────────────────────
@@ -872,13 +941,24 @@ function loop(timestamp) {
     cars.forEach(c => updateCar(c, dt));
     updateParticles(dt);
     updateCamera(dt);
-    // Switch to results when all humans finish OR all AI finish (player is last)
-    const aiCars = cars.filter(c => c.isAI);
-    const humansDone = cars.filter(c => !c.isAI).every(c => c.done);
-    const aiAllDone  = aiCars.length > 0 && aiCars.every(c => c.done);
-    if (humansDone || aiAllDone) {
-      // Mark any still-racing cars as DNF
-      cars.filter(c => !c.done).forEach(c => { c.done = true; c.finishTime = raceTime; });
+
+    // ── Win-condition tracking ────────────────────
+    const humans = cars.filter(c => !c.isAI);
+    // Condition 3: record when every human has crossed the finish line
+    if (allHumansFinishedAt < 0 && humans.every(c => c.done && !c.dnf))
+      allHumansFinishedAt = raceTime;
+    // Condition 2: record when every car is out of the race (finished or retired)
+    if (allOutAt < 0 && cars.every(c => c.done || c.dnf))
+      allOutAt = raceTime;
+
+    const shouldEnd =
+      cars.every(c => c.done && !c.dnf) ||                              // 1. all finished
+      (allOutAt >= 0 && raceTime - allOutAt >= 5) ||                    // 2. all out for 5 s
+      (allHumansFinishedAt >= 0 && raceTime - allHumansFinishedAt >= 10); // 3. humans done 10 s ago
+
+    if (shouldEnd) {
+      // DNF any cars still on-track (leaves finishTime/done unchanged for real finishers)
+      cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
       resultsCooldown = 1.5;
       screen = 'results';
     } else {
@@ -902,9 +982,9 @@ function loop(timestamp) {
     if (wasWaiting && resultsCooldown <= 0) mouse.click = false; // discard stale clicks
     // Handle button clicks before drawing so no mid-draw state changes occur
     if (resultsCooldown <= 0 && mouse.click) {
-      const bw = 198, bh = 40, by = H - 60;
-      if      (inBox(mouse.x, mouse.y, W / 2 - 220, by, bw, bh)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
-      else if (inBox(mouse.x, mouse.y, W / 2 + 14,  by, bw, bh)) { screen = 'start'; }
+      const { btnW, btnH, btnY } = RES;
+      if      (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; }
+      else if (inBox(mouse.x, mouse.y, W / 2 + 14,  btnY, btnW, btnH)) { screen = 'start'; }
     }
     if (screen === 'results') { updateParticles(dt); drawResults(); }
   }
