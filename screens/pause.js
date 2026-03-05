@@ -5,7 +5,7 @@ function drawPause() {
   ctx.fillStyle = 'rgba(0,10,18,0.72)';
   ctx.fillRect(0, 0, W, H);
 
-  const panW = 380, panH = 310;
+  const panW = 380, panH = 370;
   const panX = W / 2 - panW / 2, panY = H / 2 - panH / 2;
 
   // Panel background + border
@@ -29,8 +29,9 @@ function drawPause() {
   const btnX = W / 2 - btnW / 2;
   const pauseBtns = [
     { l: 'RESUME RACE ▶',                             y: panY + 110, col: COLORS.primary   },
-    { l: musicMuted ? '♪  SOUND OFF' : '♪  SOUND ON', y: panY + 170, col: musicMuted ? COLORS.danger : COLORS.secondary },
-    { l: 'QUIT TO MENU',                               y: panY + 230, col: COLORS.danger    },
+    { l: 'RESTART RACE',                               y: panY + 170, col: COLORS.secondary },
+    { l: musicMuted ? '♪  SOUND OFF' : '♪  SOUND ON', y: panY + 230, col: musicMuted ? COLORS.danger : COLORS.secondary },
+    { l: 'QUIT TO MENU',                               y: panY + 290, col: COLORS.danger    },
   ];
 
   pauseBtns.forEach(btn => {
@@ -48,6 +49,9 @@ function drawPause() {
     if (mouse.click && hov) {
       if (btn.l.startsWith('RESUME')) {
         paused = false;
+      } else if (btn.l.startsWith('RESTART')) {
+        paused = false;
+        initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat');
       } else if (btn.l.includes('SOUND')) {
         musicMuted = !musicMuted;
         typeof setMusicMuted === 'function' && setMusicMuted(musicMuted);
