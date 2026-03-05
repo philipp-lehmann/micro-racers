@@ -461,16 +461,16 @@ test('boost recharges when inactive', () => {
 });
 
 test('lap is counted after a full loop', () => {
-  // Simulate a car that has already crossed the halfway mark
   const car = makeCar(0, true, '#00ffff', 0);
-  car.laps = 0;
+  // updateCar does `lastProgress = car.progress` then recalculates progress
+  // from position, so we set car.progress here (it becomes lastProgress) and
+  // move the car to a position that gives real trackProgress < 0.14.
+  car.x = track0.spline[3][0];
+  car.y = track0.spline[3][1];  // just ahead of the finish line
+  car.progress    = 0.92;       // becomes lastProgress inside updateCar
   car.canCountLap = true;
-  car.lastProgress = 0.92;  // just before the line
-  car.progress     = 0.02;  // just crossed the line (wraps 0.86→0.14 window)
-  car.speed = 50;
-  // Manually trigger the lap-count path by directly calling the update
-  // with a tiny dt so no other physics changes interfere
-  updateCar(car, 0.001);
+  car.speed       = 50;
+  updateCar(car, 0.001);        // tiny dt — position barely moves
   assertEqual(car.laps, 1, `expected 1 lap, got ${car.laps}`);
 });
 
@@ -513,6 +513,9 @@ test('lap is counted after a full loop', () => {
         ? `✓  ALL ${totalPassed} TESTS PASSED`
         : `✗  ${totalFailed} FAILED  /  ${totalPassed} PASSED`}
     </div>
+    <p style="margin-top:24px">
+      <a href="index.html" style="color:#0cb566;font-size:14px">▶  Play the game</a>
+    </p>
   `;
 </script>
 
