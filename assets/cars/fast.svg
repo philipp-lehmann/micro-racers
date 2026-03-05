@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
   <!-- Narrow wedge body — sleek, car faces RIGHT -->
-  <path d="M3,8 L36,6 L44,12 L36,18 L3,16 Q1,14 1,12 Q1,10 3,8Z" fill="#1e1e1e"/>
+  <path d="M3,8 L36,6 L44,12 L36,18 L3,16 Q1,14 1,12 Q1,10 3,8Z" fill="none" stroke="#ff3355" stroke-width="1.5"/>
   <!-- Tight cockpit -->
-  <ellipse cx="22" cy="12" rx="7" ry="3.5" fill="#091520"/>
+  <ellipse cx="22" cy="12" rx="7" ry="3.5" fill="#ff3355" fill-opacity="0.18" stroke="#ff3355" stroke-width="0.8"/>
   <!-- Front fins -->
-  <path d="M36,6 L43,4 L43,7 L39,7Z" fill="#2a2a2a"/>
-  <path d="M36,18 L43,20 L43,17 L39,17Z" fill="#2a2a2a"/>
+  <path d="M36,6 L43,4 L43,7 L39,7Z" fill="none" stroke="#ff3355" stroke-width="0.8" opacity="0.55"/>
+  <path d="M36,18 L43,20 L43,17 L39,17Z" fill="none" stroke="#ff3355" stroke-width="0.8" opacity="0.55"/>
   <!-- Rear spoiler uprights -->
-  <rect x="1" y="5" width="3" height="5" rx="0.5" fill="#303030"/>
-  <rect x="1" y="14" width="3" height="5" rx="0.5" fill="#303030"/>
+  <rect x="1" y="5" width="3" height="5" rx="0.5" fill="none" stroke="#ff3355" stroke-width="0.8" opacity="0.55"/>
+  <rect x="1" y="14" width="3" height="5" rx="0.5" fill="none" stroke="#ff3355" stroke-width="0.8" opacity="0.55"/>
   <!-- Nose light -->
   <circle cx="43" cy="12" r="1.2" fill="#dddddd" opacity="0.8"/>
 </svg>

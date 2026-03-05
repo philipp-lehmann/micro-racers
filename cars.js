@@ -17,7 +17,17 @@ const GRAVEL_ZONE = 40;   // px
 const CAR_PRESETS = [
   {
     name:        'CLASSIC',
-    svg:         'assets/cars/classic.svg',
+    svgTemplate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
+  <path d="M5,5 L37,5 L42,12 L37,19 L5,19 Q2,16 2,12 Q2,8 5,5Z" fill="none" stroke="CARCOLOR" stroke-width="1.5"/>
+  <path d="M18,7.5 L29,7.5 L29,16.5 L18,16.5 Q16,14.5 16,12 Q16,9.5 18,7.5Z" fill="CARCOLOR" fill-opacity="0.18" stroke="CARCOLOR" stroke-width="0.8"/>
+  <rect x="2" y="3" width="4.5" height="3.5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <rect x="2" y="17.5" width="4.5" height="3.5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <ellipse cx="11" cy="3.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <ellipse cx="11" cy="20.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <ellipse cx="30" cy="3.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <ellipse cx="30" cy="20.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <circle cx="41" cy="12" r="1.8" fill="#dddddd" opacity="0.7"/>
+</svg>`,
     topSpeed:    220,   // px/s
     accel:       162,   // quadratic-drag acceleration constant
     brake:       260,   // deceleration when braking (px/s²)
@@ -28,7 +38,15 @@ const CAR_PRESETS = [
   },
   {
     name:        'FAST',
-    svg:         'assets/cars/fast.svg',
+    svgTemplate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
+  <path d="M3,8 L36,6 L44,12 L36,18 L3,16 Q1,14 1,12 Q1,10 3,8Z" fill="none" stroke="CARCOLOR" stroke-width="1.5"/>
+  <ellipse cx="22" cy="12" rx="7" ry="3.5" fill="CARCOLOR" fill-opacity="0.18" stroke="CARCOLOR" stroke-width="0.8"/>
+  <path d="M36,6 L43,4 L43,7 L39,7Z" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <path d="M36,18 L43,20 L43,17 L39,17Z" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <rect x="1" y="5" width="3" height="5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <rect x="1" y="14" width="3" height="5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <circle cx="43" cy="12" r="1.2" fill="#dddddd" opacity="0.8"/>
+</svg>`,
     topSpeed:    310,
     accel:       220,
     brake:       190,
@@ -39,7 +57,17 @@ const CAR_PRESETS = [
   },
   {
     name:        'TANK',
-    svg:         'assets/cars/tank.svg',
+    svgTemplate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
+  <rect x="3" y="2" width="37" height="20" rx="2.5" fill="none" stroke="CARCOLOR" stroke-width="1.5"/>
+  <rect x="38" y="3" width="4" height="18" rx="1.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
+  <rect x="14" y="5" width="16" height="14" rx="2" fill="CARCOLOR" fill-opacity="0.18" stroke="CARCOLOR" stroke-width="0.8"/>
+  <rect x="4" y="2" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <rect x="4" y="14.5" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <rect x="27" y="2" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <rect x="27" y="14.5" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
+  <circle cx="42" cy="8" r="1.5" fill="#dddddd" opacity="0.7"/>
+  <circle cx="42" cy="16" r="1.5" fill="#dddddd" opacity="0.7"/>
+</svg>`,
     topSpeed:    150,
     accel:       120,
     brake:       420,
@@ -50,14 +78,13 @@ const CAR_PRESETS = [
   },
 ];
 
-// Pre-load one Image per preset so drawCar can use ctx.drawImage().
-// Images start loading immediately; by the time a race begins they're ready.
-const CAR_IMAGES = CAR_PRESETS.map(preset => {
-  if (!preset.svg) return null;
+/** Generates a colored Image from a preset's SVG template for the given color. */
+function makeCarImage(preset, color) {
+  const svg = preset.svgTemplate.replace(/CARCOLOR/g, color);
   const img = new Image();
-  img.src = preset.svg;
+  img.src = 'data:image/svg+xml,' + encodeURIComponent(svg);
   return img;
-});
+}
 
 // ── CAR FACTORY ───────────────────────────────────
 /**
@@ -91,6 +118,7 @@ function makeCar(id, isAI, color, presetIdx) {
     offFraction:  0,   // 0 = fully on track, 1 = fully off; updated each frame
     stats:        CAR_PRESETS[presetIdx || 0],
     presetIdx:    presetIdx || 0,
+    img:          makeCarImage(CAR_PRESETS[presetIdx || 0], color),
     done: false, dnf: false, finishTime: 0,
     label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
     boostCharge: 0.5, isBoosting: false,
@@ -276,7 +304,7 @@ function resolveCarCollisions() {
 
 function drawCar(car, withLabel = true) {
   const carWidth = 22, carHeight = 12;
-  const img = CAR_IMAGES[car.presetIdx];
+  const img = car.img;
   const hasImg = img && img.complete && img.naturalWidth > 0;
 
   ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.angle);
@@ -286,22 +314,15 @@ function drawCar(car, withLabel = true) {
   ctx.shadowBlur = car.isBoosting ? 28 : (car.onTrack ? 14 : 4);
 
   if (hasImg) {
-    // Draw the SVG silhouette
     ctx.drawImage(img, -carWidth / 2, -carHeight / 2, carWidth, carHeight);
-    // Thin colored outline on top for color identity
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = car.color; ctx.lineWidth = 0.7;
-    ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
   } else {
     // Fallback: procedural drawing
     ctx.strokeStyle = car.color; ctx.lineWidth = 1.8;
     ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
-    // Windscreen area
     ctx.fillStyle = car.color + '44';
     ctx.fillRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
     ctx.strokeStyle = car.color; ctx.lineWidth = 0.8;
     ctx.strokeRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
-    // Front headlight dot
     ctx.fillStyle = car.color;
     ctx.beginPath(); ctx.arc(carWidth / 2 - 1, 0, 2.5, 0, Math.PI * 2); ctx.fill();
   }

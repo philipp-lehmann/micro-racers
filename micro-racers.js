@@ -369,6 +369,14 @@ let editPts       = [];       // [x, y, w] points being drawn in the editor
 let editPreview   = null;     // compiled track object for live preview (null if < 3 pts)
 let musicMuted    = false;    // whether the soundtrack is muted
 let paused        = false;    // whether the race is paused
+
+// Cache for car preview images on the start screen, keyed "presetIdx:color"
+const previewImageCache = {};
+function getPreviewImage(presetIdx, color) {
+  const key = presetIdx + ':' + color;
+  if (!previewImageCache[key]) previewImageCache[key] = makeCarImage(CAR_PRESETS[presetIdx], color);
+  return previewImageCache[key];
+}
 // Race-end timing for the three win conditions
 let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
 let allOutAt            = -1; // raceTime when all cars became done or dnf
@@ -756,14 +764,11 @@ function drawStart() {
     ctx.fillStyle = (prevHov || nextHov) ? COLORS.secondary : COLORS.dim;
     ctx.textAlign = 'left';  ctx.fillText('◀', cx + 10,          imgY + prevH / 2);
     ctx.textAlign = 'right'; ctx.fillText('▶', cx + CARD_W - 10, imgY + prevH / 2);
-    const previewImg = CAR_IMAGES[slot.preset];
+    const previewImg = getPreviewImage(slot.preset, pcol);
     ctx.save();
     if (previewImg && previewImg.complete && previewImg.naturalWidth > 0) {
       ctx.shadowColor = pcol; ctx.shadowBlur = isHuman ? 16 : 6;
       ctx.drawImage(previewImg, imgX, imgY, prevW, prevH);
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = pcol + (isHuman ? 'bb' : '44'); ctx.lineWidth = 1;
-      ctx.strokeRect(imgX, imgY, prevW, prevH);
     } else {
       // Fallback: plain colored rectangle while image loads
       ctx.fillStyle = pcol + (isHuman ? '33' : '14');
