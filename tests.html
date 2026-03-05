@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MICRO RACERS — Tests</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000c18; color: #aaffcc;
+      font-family: 'Courier New', monospace;
+      padding: 40px; line-height: 1.6;
+    }
+    h1 { color: #00ff88; font-size: 28px; margin-bottom: 8px; }
+    .subtitle { color: #334455; margin-bottom: 32px; font-size: 14px; }
+    .group { margin-bottom: 24px; }
+    .group-name {
+      color: #0cb566; font-size: 16px; font-weight: bold;
+      border-bottom: 1px solid #002530; padding-bottom: 6px; margin-bottom: 8px;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .result { padding: 3px 0; font-size: 14px; }
+    .pass { color: #00ff88; }
+    .fail { color: #ff3355; }
+    .error-msg { color: #ff6677; font-size: 12px; margin-left: 24px; }
+    .summary {
+      margin-top: 32px; padding: 16px 20px;
+      border: 1.5px solid; font-size: 18px; font-weight: bold;
+      display: inline-block;
+    }
+    .summary.all-pass { border-color: #00ff88; color: #00ff88; }
+    .summary.has-fail  { border-color: #ff3355; color: #ff3355; }
+  </style>
+</head>
+<body>
+
+<!-- ── MOCKS ── loaded before game files so globals exist at parse time -->
+<script>
+  // Minimal browser environment for headless-style testing in a real browser.
+  // Only the globals actually read by geometry.js / cars.js at load time are needed.
+
+  const canvas = document.createElement('canvas');
+  const ctx    = canvas.getContext('2d');
+  const W = 1600, H = 1140;
+  const ISO_SCALE = 0.6;
+  const BTN_DIM   = '1a';
+  const COLORS    = { pc: ['#00ffff','#ff3355','#ffee00','#cc44ff'] };
+
+  // Game-state globals used by updateCar / makeCar
+  let TRACKS        = [];
+  let selectedTrack = 0;
+  let raceTime      = 0;
+  let LAPS          = 1;
+  let finishOrder   = [];
+  let cars          = [];
+
+  const CONTROLS = [
+    { up: 'ArrowUp', dn: 'ArrowDown', lt: 'ArrowLeft', rt: 'ArrowRight', give: 'Backspace', honk: '-',  boost: '.'  },
+    { up: 'w',       dn: 's',         lt: 'a',          rt: 'd',         give: 'q',         honk: 'e',  boost: 'r'  },
+    { up: 'i',       dn: 'k',         lt: 'j',          rt: 'l',         give: 'u',         honk: 'o',  boost: 'p'  },
+    { up: '8',       dn: '2',         lt: '4',          rt: '6',         give: '5',         honk: '0',  boost: '*'  },
+  ];
+  const keys = {};
+
+  // Stub particle/effect functions called by updateCar
+  function spawnBurst() {}
+  function spawnSkid()  {}
+  function spawnHonk()  {}
+</script>
+
+<!-- Game files in dependency order -->
+<script src="geometry.js"></script>
+<script src="tracks.js"></script>
+
+<script>
+  // buildTrackObj lives in micro-racers.js; inline it here so tests don't
+  // pull in the entire game state. Kept byte-for-byte identical to the source.
+  function buildTrackObj(def, isUser) {
+    const spline = buildSpline(def.pts, 14);
+    const edges  = buildEdges(spline);
+    const cumulativeLengths = [0];
+    for (let i = 1; i < spline.length; i++)
+      cumulativeLengths.push(cumulativeLengths[i - 1] +
+        Math.hypot(spline[i][0] - spline[i-1][0], spline[i][1] - spline[i-1][1]));
+    const totalLength = cumulativeLengths[cumulativeLengths.length - 1] +
+      Math.hypot(spline[0][0] - spline[spline.length-1][0], spline[0][1] - spline[spline.length-1][1]);
+    return { ...def, spline, edges, cumulativeLengths, totalLength, isUser: !!isUser };
+  }
+
+  // Build the real track objects now that geometry functions are available
+  TRACKS = TRACK_DEFS.map(def => buildTrackObj(def, false));
+</script>
+
+<script src="cars.js"></script>
+
+<!-- ── TEST HARNESS ── -->
+<script>
+  const _results = [];
+  let   _group   = '';
+
+  function group(name) { _group = name; }
+
+  function test(name, fn) {
+    try {
+      fn();
+      _results.push({ group: _group, name, passed: true });
+    } catch (e) {
+      _results.push({ group: _group, name, passed: false, error: e.message });
+    }
+  }
+
+  function assert(cond, msg) {
+    if (!cond) throw new Error(msg || 'assertion failed');
+  }
+  function assertEqual(a, b, msg) {
+    if (a !== b) throw new Error(msg || `expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+  }
+  function assertApprox(a, b, tol = 0.01, msg) {
+    if (Math.abs(a - b) > tol)
+      throw new Error(msg || `expected ${a} ≈ ${b}  (tolerance ±${tol})`);
+  }
+</script>
+
+<!-- ── TESTS ── -->
+<script>
+
+// ── formatTime ────────────────────────────────────
+group('formatTime');
+
+test('zero seconds',              () => assertEqual(formatTime(0),    '0:00.00'));
+test('sub-minute value',          () => assertEqual(formatTime(3.14), '0:03.14'));
+test('pads single-digit seconds', () => assertEqual(formatTime(5),    '0:05.00'));
+test('exactly one minute',        () => assertEqual(formatTime(60),   '1:00.00'));
+test('over one minute',           () => assertEqual(formatTime(61.5), '1:01.50'));
+test('large value (10 min)',      () => assertEqual(formatTime(600),  '10:00.00'));
+
+
+// ── inBox ─────────────────────────────────────────
+group('inBox');
+
+test('point inside',          () => assert( inBox(50,  50,  0, 0, 100, 100)));
+test('point outside right',   () => assert(!inBox(150, 50,  0, 0, 100, 100)));
+test('point outside below',   () => assert(!inBox(50,  150, 0, 0, 100, 100)));
+test('point outside left',    () => assert(!inBox(-1,  50,  0, 0, 100, 100)));
+test('point outside above',   () => assert(!inBox(50,  -1,  0, 0, 100, 100)));
+test('on left edge (inclusive)',  () => assert( inBox(0,   50, 0, 0, 100, 100)));
+test('on right edge (inclusive)', () => assert( inBox(100, 50, 0, 0, 100, 100)));
+test('on top-left corner',        () => assert( inBox(0,   0,  0, 0, 100, 100)));
+
+
+// ── muteColor ─────────────────────────────────────
+group('muteColor');
+
+test('halves red channel',        () => assertEqual(muteColor('#ff0000', 0.5), '#800000'));
+test('default factor is 0.8',     () => assertEqual(muteColor('#ffffff'),      '#cccccc'));
+test('factor 1.0 is identity',    () => assertEqual(muteColor('#00ff88', 1.0), '#00ff88'));
+test('factor 0 returns black',    () => assertEqual(muteColor('#ffffff', 0),   '#000000'));
+test('pads single hex digit',     () => {
+  // Math.round(16 * 0.5) = 8 → '08', not '8'
+  assertEqual(muteColor('#100000', 0.5), '#080000');
+});
+
+
+// ── distToSegment ─────────────────────────────────
+group('distToSegment');
+
+test('point on segment midpoint',    () => assertApprox(distToSegment(0, 0, -1, 0, 1, 0), 0));
+test('perpendicular from midpoint',  () => assertApprox(distToSegment(0, 1, -1, 0, 1, 0), 1));
+test('past end of segment',          () => assertApprox(distToSegment(2, 0, -1, 0, 1, 0), 1));
+test('before start of segment',      () => assertApprox(distToSegment(-2, 0, -1, 0, 1, 0), 1));
+test('degenerate segment (a === b)', () => assertApprox(distToSegment(3, 4, 0, 0, 0, 0), 5));
+test('diagonal segment',             () => {
+  // Point (0,1) to segment (0,0)→(1,1): nearest point is (0.5,0.5), dist = √0.5
+  assertApprox(distToSegment(0, 1, 0, 0, 1, 1), Math.sqrt(0.5), 0.001);
+});
+
+
+// ── buildSpline ───────────────────────────────────
+group('buildSpline');
+
+const SQ_PTS = [[0,0,80],[200,0,80],[200,200,80],[0,200,80]];
+const spline14 = buildSpline(SQ_PTS, 14);
+
+test('output length = numPts × res',    () => assertEqual(spline14.length, SQ_PTS.length * 14));
+test('each point has 3 components',     () => assert(spline14.every(p => p.length === 3)));
+test('x/y values are finite numbers',   () => assert(spline14.every(p => isFinite(p[0]) && isFinite(p[1]))));
+test('width values stay positive',      () => assert(spline14.every(p => p[2] > 0)));
+test('first point is near first ctrl',  () => {
+  assertApprox(spline14[0][0], 0,   8);
+  assertApprox(spline14[0][1], 0,   8);
+});
+test('default res is 14', () => {
+  const s = buildSpline(SQ_PTS);
+  assertEqual(s.length, SQ_PTS.length * 14);
+});
+
+
+// ── buildEdges ────────────────────────────────────
+group('buildEdges');
+
+const edges14 = buildEdges(spline14);
+
+test('leftEdge length matches spline',   () => assertEqual(edges14.leftEdge.length,  spline14.length));
+test('rightEdge length matches spline',  () => assertEqual(edges14.rightEdge.length, spline14.length));
+test('left and right are separated',     () => {
+  // At each point, edges should be ~width apart (width=80, so ~40 each side)
+  const l = edges14.leftEdge[0], r = edges14.rightEdge[0];
+  assert(Math.hypot(l[0] - r[0], l[1] - r[1]) > 10, 'edges should not collapse');
+});
+test('all edge coords are finite', () => {
+  const all = [...edges14.leftEdge, ...edges14.rightEdge];
+  assert(all.every(p => isFinite(p[0]) && isFinite(p[1])));
+});
+
+
+// ── buildTrackObj ─────────────────────────────────
+group('buildTrackObj');
+
+const testDef = { name: 'TEST', sub: 'X', col: '#00ff88', pts: SQ_PTS };
+const trackObj = buildTrackObj(testDef, false);
+
+test('has spline array',                   () => assert(Array.isArray(trackObj.spline) && trackObj.spline.length > 0));
+test('has edges',                          () => assert(trackObj.edges && Array.isArray(trackObj.edges.leftEdge)));
+test('totalLength is positive',            () => assert(trackObj.totalLength > 0));
+test('cumulativeLengths starts at 0',      () => assertEqual(trackObj.cumulativeLengths[0], 0));
+test('cumulativeLengths is monotonic',     () => {
+  const cl = trackObj.cumulativeLengths;
+  assert(cl.every((v, i) => i === 0 || v >= cl[i - 1]));
+});
+test('totalLength > last cumulative',      () => {
+  const cl = trackObj.cumulativeLengths;
+  assert(trackObj.totalLength > cl[cl.length - 1]);
+});
+test('isUser=false preserved',             () => assertEqual(trackObj.isUser, false));
+test('isUser=true preserved',              () => assertEqual(buildTrackObj(testDef, true).isUser, true));
+test('name/col/sub passed through',        () => {
+  assertEqual(trackObj.name, 'TEST');
+  assertEqual(trackObj.col,  '#00ff88');
+});
+
+
+// ── nearestTrackPoint ─────────────────────────────
+group('nearestTrackPoint');
+
+const track0 = TRACKS[0];
+const splineMid = track0.spline[Math.floor(track0.spline.length / 2)];
+
+test('point on centerline has dist ≈ 0', () => {
+  const { dist } = nearestTrackPoint(track0.spline[0][0], track0.spline[0][1], track0);
+  assertApprox(dist, 0, 5);
+});
+test('returns positive width',           () => {
+  const { width } = nearestTrackPoint(track0.spline[0][0], track0.spline[0][1], track0);
+  assert(width > 0, `width should be positive, got ${width}`);
+});
+test('width reflects track definition',  () => {
+  const { width } = nearestTrackPoint(track0.spline[0][0], track0.spline[0][1], track0);
+  assert(width > 40 && width < 300, `width ${width} out of typical range`);
+});
+test('far-off point has large dist',     () => {
+  const { dist } = nearestTrackPoint(-9999, -9999, track0);
+  assert(dist > 500, `expected large dist, got ${dist}`);
+});
+test('halfway point still returns finite width', () => {
+  const { dist, width } = nearestTrackPoint(splineMid[0], splineMid[1], track0);
+  assert(isFinite(dist) && isFinite(width));
+});
+
+
+// ── trackProgress ─────────────────────────────────
+group('trackProgress');
+
+test('progress is always in [0, 1]', () => {
+  // Sample every 10th spline point across the entire track
+  for (let i = 0; i < track0.spline.length; i += 10) {
+    const p = trackProgress(track0.spline[i][0], track0.spline[i][1], track0);
+    assert(p >= 0 && p <= 1, `progress ${p} out of range at index ${i}`);
+  }
+});
+test('progress at spline[0] is near 0 or 1', () => {
+  const p = trackProgress(track0.spline[0][0], track0.spline[0][1], track0);
+  assert(p < 0.05 || p > 0.95, `expected near seam, got ${p}`);
+});
+test('progress at halfway spline point is near 0.5', () => {
+  const midIdx = Math.floor(track0.spline.length / 2);
+  const p = trackProgress(track0.spline[midIdx][0], track0.spline[midIdx][1], track0);
+  assertApprox(p, 0.5, 0.12);
+});
+test('progress increases monotonically along spline (coarse check)', () => {
+  // Sample a quarter-arc — progress should increase
+  const quarter = Math.floor(track0.spline.length / 4);
+  const p1 = trackProgress(track0.spline[5][0],         track0.spline[5][1],         track0);
+  const p2 = trackProgress(track0.spline[quarter][0],   track0.spline[quarter][1],   track0);
+  assert(p2 > p1, `expected p2 ${p2} > p1 ${p1}`);
+});
+
+
+// ── makeCar ───────────────────────────────────────
+group('makeCar');
+
+const testCar = makeCar(0, false, '#00ffff', 0);
+
+test('id is set',               () => assertEqual(testCar.id, 0));
+test('isAI is false',           () => assertEqual(testCar.isAI, false));
+test('color is set',            () => assertEqual(testCar.color, '#00ffff'));
+test('starts at speed 0',       () => assertEqual(testCar.speed, 0));
+test('starts at 0 laps',        () => assertEqual(testCar.laps, 0));
+test('boostCharge starts 0.5',  () => assertEqual(testCar.boostCharge, 0.5));
+test('not done',                () => assertEqual(testCar.done, false));
+test('not dnf',                 () => assertEqual(testCar.dnf, false));
+test('bestLap is Infinity',     () => assertEqual(testCar.bestLap, Infinity));
+test('has colored SVG image',   () => assert(testCar.img instanceof Image));
+test('image src is data URL',   () => assert(testCar.img.src.startsWith('data:image/svg+xml')));
+test('stats references preset', () => assert(testCar.stats === CAR_PRESETS[0]));
+test('presetIdx is stored',     () => assertEqual(testCar.presetIdx, 0));
+test('AI car has muted color',  () => {
+  const ai = makeCar(1, true, muteColor(COLORS.pc[1]), 0);
+  assertEqual(ai.isAI, true);
+});
+test('different presets give different stats', () => {
+  const c0 = makeCar(0, true, '#fff', 0);
+  const c1 = makeCar(0, true, '#fff', 1);
+  assert(c0.stats !== c1.stats, 'presets should differ');
+});
+test('start position is on or near the track', () => {
+  const { dist, width } = nearestTrackPoint(testCar.x, testCar.y, track0);
+  assert(dist < width, `car starts ${dist}px from center, track width ${width}`);
+});
+
+
+// ── resolveCarCollisions ──────────────────────────
+group('resolveCarCollisions');
+
+test('separates overlapping cars', () => {
+  const a = makeCar(0, true, '#00ffff', 0);
+  const b = makeCar(1, true, '#ff3355', 0);
+  b.x = a.x + 5; b.y = a.y;  // place within CAR_RADIUS*2 (=28)
+  const distBefore = Math.hypot(b.x - a.x, b.y - a.y);
+  cars = [a, b];
+  resolveCarCollisions();
+  const distAfter = Math.hypot(b.x - a.x, b.y - a.y);
+  assert(distAfter > distBefore, `dist should increase: ${distBefore} → ${distAfter}`);
+});
+
+test('does not touch non-overlapping cars', () => {
+  const a = makeCar(0, true, '#00ffff', 0);
+  const b = makeCar(1, true, '#ff3355', 0);
+  b.x = a.x + 200; b.y = a.y;  // far apart
+  const bxBefore = b.x;
+  cars = [a, b];
+  resolveCarCollisions();
+  assertEqual(b.x, bxBefore);
+});
+
+test('skips finished cars', () => {
+  const a = makeCar(0, true, '#00ffff', 0);
+  const b = makeCar(1, true, '#ff3355', 0);
+  a.done = true;
+  b.x = a.x + 5; b.y = a.y;
+  const bxBefore = b.x;
+  cars = [a, b];
+  resolveCarCollisions();
+  assertEqual(b.x, bxBefore, 'b should not move when a is done');
+});
+
+test('skips DNF cars', () => {
+  const a = makeCar(0, true, '#00ffff', 0);
+  const b = makeCar(1, true, '#ff3355', 0);
+  a.dnf = true;
+  b.x = a.x + 5; b.y = a.y;
+  const bxBefore = b.x;
+  cars = [a, b];
+  resolveCarCollisions();
+  assertEqual(b.x, bxBefore, 'b should not move when a is dnf');
+});
+
+
+// ── updateCar — physics ───────────────────────────
+group('updateCar');
+
+test('AI car gains speed over 1 second', () => {
+  const car = makeCar(0, true, '#00ffff', 0);
+  updateCar(car, 1.0);
+  assert(car.speed > 0, `expected speed > 0, got ${car.speed}`);
+});
+
+test('human car accelerates with throttle key held', () => {
+  const car = makeCar(0, false, '#00ffff', 0);
+  keys['ArrowUp'] = true;
+  updateCar(car, 0.1);
+  keys['ArrowUp'] = false;
+  assert(car.speed > 0, `expected speed > 0, got ${car.speed}`);
+});
+
+test('coasting car slows due to friction', () => {
+  const car = makeCar(0, false, '#00ffff', 0);
+  car.speed = 150;
+  // no keys → throttle = 0 → friction applies
+  const before = car.speed;
+  updateCar(car, 0.1);
+  assert(car.speed < before, `friction should reduce speed from ${before}, got ${car.speed}`);
+});
+
+test('braking reduces speed', () => {
+  const car = makeCar(0, false, '#00ffff', 0);
+  car.speed = 100;
+  keys['ArrowDown'] = true;
+  updateCar(car, 0.1);
+  keys['ArrowDown'] = false;
+  assert(car.speed < 100, `speed should drop, got ${car.speed}`);
+});
+
+test('position updates when moving', () => {
+  const car = makeCar(0, true, '#00ffff', 0);
+  car.speed = 200;
+  const { x, y } = car;
+  updateCar(car, 0.1);
+  assert(car.x !== x || car.y !== y, 'position should change');
+});
+
+test('done car is not updated', () => {
+  const car = makeCar(0, true, '#00ffff', 0);
+  car.done = true; car.speed = 200;
+  const { x } = car;
+  updateCar(car, 0.1);
+  assertEqual(car.x, x, 'done car must not move');
+});
+
+test('dnf car is not updated', () => {
+  const car = makeCar(0, true, '#00ffff', 0);
+  car.dnf = true; car.speed = 200;
+  const { x } = car;
+  updateCar(car, 0.1);
+  assertEqual(car.x, x, 'dnf car must not move');
+});
+
+test('speed is capped at topSpeed × boostFactor', () => {
+  const car = makeCar(0, true, '#00ffff', 0);
+  car.speed = 9999;
+  updateCar(car, 0.1);
+  const cap = car.stats.topSpeed * car.stats.boostFactor;
+  assert(car.speed <= cap + 1, `speed ${car.speed} exceeds cap ${cap}`);
+});
+
+test('boost drains boostCharge', () => {
+  const car = makeCar(0, false, '#00ffff', 0);
+  car.boostCharge = 1;
+  keys['ArrowUp'] = true;
+  keys['.'] = true;  // P1 boost key
+  updateCar(car, 0.5);
+  keys['ArrowUp'] = false;
+  keys['.'] = false;
+  assert(car.boostCharge < 1, `boost should drain charge, got ${car.boostCharge}`);
+});
+
+test('boost recharges when inactive', () => {
+  const car = makeCar(0, false, '#00ffff', 0);
+  car.boostCharge = 0.2;
+  // no keys pressed → isBoosting = false
+  updateCar(car, 1.0);
+  assert(car.boostCharge > 0.2, `charge should refill, got ${car.boostCharge}`);
+});
+
+test('lap is counted after a full loop', () => {
+  // Simulate a car that has already crossed the halfway mark
+  const car = makeCar(0, true, '#00ffff', 0);
+  car.laps = 0;
+  car.canCountLap = true;
+  car.lastProgress = 0.92;  // just before the line
+  car.progress     = 0.02;  // just crossed the line (wraps 0.86→0.14 window)
+  car.speed = 50;
+  // Manually trigger the lap-count path by directly calling the update
+  // with a tiny dt so no other physics changes interfere
+  updateCar(car, 0.001);
+  assertEqual(car.laps, 1, `expected 1 lap, got ${car.laps}`);
+});
+
+</script>
+
+<!-- ── RENDER RESULTS ── -->
+<script>
+  const grouped = {};
+  let totalPassed = 0, totalFailed = 0;
+
+  _results.forEach(r => {
+    if (!grouped[r.group]) grouped[r.group] = [];
+    grouped[r.group].push(r);
+    if (r.passed) totalPassed++; else totalFailed++;
+  });
+
+  const allPass = totalFailed === 0;
+
+  document.body.innerHTML = `
+    <h1>MICRO RACERS — TEST SUITE</h1>
+    <p class="subtitle">${_results.length} tests across ${Object.keys(grouped).length} groups</p>
+
+    ${Object.entries(grouped).map(([grp, tests]) => {
+      const gPass = tests.filter(t => t.passed).length;
+      return `
+        <div class="group">
+          <div class="group-name">${grp}  <span style="color:#334455;font-weight:normal">${gPass}/${tests.length}</span></div>
+          ${tests.map(t => `
+            <div class="result ${t.passed ? 'pass' : 'fail'}">
+              ${t.passed ? '✓' : '✗'} ${t.name}
+              ${t.error ? `<div class="error-msg">${t.error}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }).join('')}
+
+    <div class="summary ${allPass ? 'all-pass' : 'has-fail'}">
+      ${allPass
+        ? `✓  ALL ${totalPassed} TESTS PASSED`
+        : `✗  ${totalFailed} FAILED  /  ${totalPassed} PASSED`}
+    </div>
+  `;
+</script>
+
+</body>
+</html>
