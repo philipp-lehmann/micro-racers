@@ -132,11 +132,16 @@ function drawStart() {
     ctx.fillText(CAR_PRESETS[slot.preset].name, cx + CARD_W / 2, imgY + prevH + 12);
   }
 
-  // ── Keyboard-navigable rows: TRACK + LAPS ──
+  // ── Keyboard-navigable rows: TRACK + MODE + LAPS/POINTS ──
   const ROWS_Y  = PICKERS_Y + 2 * CARD_H + CARD_GAP + 16;
+  const thirdLabel = gameMode === 'race' ? 'LAPS' : 'POINTS';
+  const thirdValue = gameMode === 'race'
+    ? LAPS + (LAPS === 1 ? ' LAP' : ' LAPS')
+    : POINTS_TO_WIN + (POINTS_TO_WIN === 1 ? ' PT' : ' PTS');
   const rowDefs = [
     { label: 'TRACK', value: track.name },
-    { label: 'LAPS',  value: LAPS + (LAPS === 1 ? ' LAP' : ' LAPS') },
+    { label: 'MODE',  value: gameMode === 'race' ? 'RACE' : 'ELIMINATION' },
+    { label: thirdLabel, value: thirdValue },
   ];
   rowDefs.forEach((rowDef, i) => {
     const ry  = ROWS_Y + i * (ROW_H + 8);
@@ -147,7 +152,9 @@ function drawStart() {
       menuRow = i;
       const dir = mouse.x < ROW_X + ROW_W / 2 ? -1 : 1;
       if (i === 0) selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
-      else         LAPS = Math.max(1, Math.min(9, LAPS + dir));
+      else if (i === 1) gameMode = gameMode === 'race' ? 'elimination' : 'race';
+      else if (gameMode === 'race') LAPS = Math.max(1, Math.min(9, LAPS + dir));
+      else POINTS_TO_WIN = Math.max(1, Math.min(9, POINTS_TO_WIN + dir));
     }
     ctx.save();
     ctx.globalAlpha = sel ? 1 : 0.9;
@@ -167,7 +174,7 @@ function drawStart() {
   });
 
   // ── START RACE button ──
-  const sbY = ROWS_Y + 2 * (ROW_H + 8) + 12;
+  const sbY = ROWS_Y + 3 * (ROW_H + 8) + 12;
   const startHovered = inBox(mouse.x, mouse.y, ROW_X, sbY, ROW_W, ROW_H);
   const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
   ctx.shadowColor = COLORS.primary; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;

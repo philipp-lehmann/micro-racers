@@ -57,7 +57,7 @@ function drawPause() {
         typeof setMusicMuted === 'function' && setMusicMuted(musicMuted);
       } else if (btn.l.startsWith('QUIT')) {
         paused = false;
-        screen = 'start'; setMusicMode('beat');
+        saveSettings(); screen = 'start'; setMusicMode('beat');
       }
     }
   });

@@ -100,8 +100,9 @@ function makeCar(id, isAI, color, presetIdx) {
   const spline = track.spline;
   const row    = Math.floor(id / 2);
   const side   = (id % 2 === 0) ? -1 : 1;  // left or right of centerline
-  const ROW_GAP = 50; // px between grid rows
-  const targetLen = track.totalLength - row * ROW_GAP;
+  const ROW_GAP = 50;    // px between each grid row
+  const GRID_OFFSET = 20; // extra px behind start line for the front row
+  const targetLen = track.totalLength - GRID_OFFSET - row * ROW_GAP;
   let startIdx = 0;
   for (let k = track.cumulativeLengths.length - 1; k >= 0; k--) {
     if (track.cumulativeLengths[k] <= targetLen) { startIdx = k; break; }
@@ -117,7 +118,7 @@ function makeCar(id, isAI, color, presetIdx) {
     id, isAI, color,
     x, y, angle,
     speed: 0, steering: 0, throttle: 0,
-    laps: 0,
+    laps: (typeof gameMode !== 'undefined' && gameMode === 'elimination') ? -1 : 0,
     progress:     trackProgress(x, y, track),
     lastProgress: 0,
     canCountLap:  false,   // must cross halfway before the finish line counts
@@ -250,7 +251,7 @@ function updateCar(car, dt) {
     // Reset flag so they must loop all the way around again
     car.canCountLap = false;
 
-    if (car.laps >= LAPS && !car.done) {
+    if (car.laps >= LAPS && !car.done && gameMode !== "elimination") {
       car.done = true;
       car.finishTime = raceTime;
       finishOrder.push(car.id);
@@ -260,7 +261,7 @@ function updateCar(car, dt) {
 
   // 3. Penalise reversing across the start/finish line
   if (car.lastProgress < 0.14 && car.progress > 0.86 && car.speed < -5) {
-    car.laps = Math.max(0, car.laps - 1);
+    car.laps = Math.max((typeof gameMode !== 'undefined' && gameMode === 'elimination') ? -1 : 0, car.laps - 1);
   }
 }
 

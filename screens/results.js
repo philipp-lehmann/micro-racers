@@ -19,12 +19,20 @@ function drawResults() {
   const track = TRACKS[selectedTrack];
 
   // ── Title ──────────────────────────────────────
+  const isElim    = gameMode === 'elimination';
+  const isChampion = isElim && scores.some(s => s >= POINTS_TO_WIN);
+  const champCar  = isChampion ? cars.find(c => scores[c.id] >= POINTS_TO_WIN) : null;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 22;
-  ctx.fillStyle = COLORS.primary; ctx.font = 'bold 38px Courier New';
-  ctx.fillText('RACE COMPLETE', W / 2, 52); ctx.shadowBlur = 0;
+  const titleCol = isChampion ? (champCar ? champCar.color : COLORS.primary) : COLORS.primary;
+  ctx.shadowColor = titleCol; ctx.shadowBlur = 22;
+  ctx.fillStyle = titleCol; ctx.font = 'bold 38px Courier New';
+  const titleText = isChampion ? (champCar ? champCar.label + ' WINS THE CHAMPIONSHIP!' : 'CHAMPION!') : (isElim ? 'ROUND COMPLETE' : 'RACE COMPLETE');
+  ctx.fillText(titleText, W / 2, 52); ctx.shadowBlur = 0;
   ctx.fillStyle = track.col; ctx.font = '18px Courier New';
-  ctx.fillText(track.name + '  ·  ' + track.sub + '  ·  ' + LAPS + ' LAP' + (LAPS > 1 ? 'S' : ''), W / 2, 78);
+  const subText = isElim
+    ? 'ELIMINATION  ·  FIRST TO ' + POINTS_TO_WIN + ' POINT' + (POINTS_TO_WIN > 1 ? 'S' : '') + ' WINS'
+    : track.name + '  ·  ' + track.sub + '  ·  ' + LAPS + ' LAP' + (LAPS > 1 ? 'S' : '');
+  ctx.fillText(subText, W / 2, 78);
   ctx.strokeStyle = '#002530'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(50, 92); ctx.lineTo(W - 50, 92); ctx.stroke();
 
@@ -75,7 +83,7 @@ function drawResults() {
     ctx.fillText(car.label, tableX + COL.driver, rowCY);
 
     // Finish time or status
-    const resultText = car.done ? formatTime(car.finishTime) : car.dnf ? 'RETIRED' : 'DNF';
+    const resultText = car.done ? formatTime(car.finishTime) : car.dnf ? (isElim ? (car.id === elimRoundWinner ? 'SURVIVOR' : 'ELIMINATED') : 'RETIRED') : 'DNF';
     ctx.fillStyle = car.done ? COLORS.white : '#445566';
     ctx.font = (isWinner ? 'bold 28' : '22') + 'px Courier New';
     ctx.fillText(resultText, tableX + COL.time, rowCY);
@@ -102,10 +110,42 @@ function drawResults() {
     ctx.fillText(Math.round(progressPct * 100) + '%', barX, rowCY + 16);
   });
 
+  // ── Elimination score panel ──────────────────────
+  if (isElim) {
+    const panY = btnY - 68;
+    ctx.strokeStyle = '#002530'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(RES.tableX, panY); ctx.lineTo(RES.tableX + RES.tableW, panY); ctx.stroke();
+    ctx.fillStyle = '#004433'; ctx.font = '14px Courier New';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('CHAMPIONSHIP STANDINGS', RES.tableX, panY + 14);
+    const slotW = RES.tableW / cars.length;
+    cars.forEach((car, ci) => {
+      const sx = RES.tableX + ci * slotW;
+      const pts = scores[car.id];
+      const isWin = pts >= POINTS_TO_WIN;
+      ctx.fillStyle = car.color + (isWin ? 'ff' : '99');
+      ctx.font = (isWin ? 'bold ' : '') + '20px Courier New';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(car.label + '  ' + pts + ' / ' + POINTS_TO_WIN, sx + slotW / 2, panY + 46);
+      // Progress pip row
+      for (let p = 0; p < POINTS_TO_WIN; p++) {
+        const pw = 14, ph = 14, gap = 4;
+        const totalW = POINTS_TO_WIN * (pw + gap) - gap;
+        const pipX = sx + slotW / 2 - totalW / 2 + p * (pw + gap);
+        ctx.fillStyle = p < pts ? car.color : car.color + '22';
+        ctx.strokeStyle = car.color + '55'; ctx.lineWidth = 1;
+        ctx.fillRect(pipX, panY + 58, pw, ph);
+        ctx.strokeRect(pipX, panY + 58, pw, ph);
+      }
+    });
+  }
+
   // ── Buttons ─────────────────────────────────────
+  const rightLabel = isChampion ? 'PLAY AGAIN ▶' : (isElim ? 'NEXT ROUND ▶' : 'RACE AGAIN ▶');
+  const leftLabel  = isElim ? 'QUIT ⤨' : 'CHANGE TRACK ⤨';
   const resultBtns = [
-    { l: 'RACE AGAIN ▶',   x: W / 2 + 14  },
-    { l: 'CHANGE TRACK ⤨', x: W / 2 - 220 },
+    { l: rightLabel, x: W / 2 + 14  },
+    { l: leftLabel,  x: W / 2 - 220 },
   ];
   const btnsReady = resultsCooldown <= 0;
   ctx.save(); ctx.globalAlpha = btnsReady ? 1 : 0.35;

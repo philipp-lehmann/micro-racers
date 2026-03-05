@@ -79,6 +79,44 @@ function persistUserTracks() {
 
 loadUserTracks();
 
+// ── SETTINGS PERSISTENCE ──────────────────────────
+function saveSettings() {
+  const data = {
+    playerSlots: playerSlots.map(s => ({ mode: s.mode, preset: s.preset })),
+    selectedTrack,
+    gameMode,
+    LAPS,
+    POINTS_TO_WIN,
+    musicMuted,
+  };
+  try { localStorage.setItem('mrSettings', JSON.stringify(data)); } catch {}
+}
+
+function loadSettings() {
+  try {
+    const data = JSON.parse(localStorage.getItem('mrSettings') || 'null');
+    if (!data) return;
+    if (Array.isArray(data.playerSlots)) {
+      data.playerSlots.forEach((s, i) => {
+        if (playerSlots[i]) {
+          playerSlots[i].mode   = s.mode   || playerSlots[i].mode;
+          playerSlots[i].preset = typeof s.preset === 'number' ? s.preset : playerSlots[i].preset;
+        }
+      });
+    }
+    if (typeof data.selectedTrack === 'number') selectedTrack = Math.min(data.selectedTrack, TRACKS.length - 1);
+    if (data.gameMode === 'race' || data.gameMode === 'elimination') gameMode = data.gameMode;
+    if (typeof data.LAPS === 'number') LAPS = Math.max(1, Math.min(9, data.LAPS));
+    if (typeof data.POINTS_TO_WIN === 'number') POINTS_TO_WIN = Math.max(1, Math.min(9, data.POINTS_TO_WIN));
+    if (typeof data.musicMuted === 'boolean') {
+      musicMuted = data.musicMuted;
+      typeof setMusicMuted === 'function' && setMusicMuted(musicMuted);
+    }
+  } catch {}
+}
+
+loadSettings();
+
 // ── HIGHSCORES ────────────────────────────────────
 let highscores = {};   // { "trackName:laps": { finishTime: {time,label}, bestLap: {time,label} } }
 let newRecords = {};   // same shape, truthy if record was broken this race
@@ -121,14 +159,18 @@ document.addEventListener('keydown', e => {
   keys[e.key] = true;
 
   if (screen === 'start') {
-    if (e.key === 'ArrowUp')   menuRow = (menuRow - 1 + 2) % 2;
-    if (e.key === 'ArrowDown') menuRow = (menuRow + 1) % 2;
+    if (e.key === 'ArrowUp')   menuRow = (menuRow - 1 + 3) % 3;
+    if (e.key === 'ArrowDown') menuRow = (menuRow + 1) % 3;
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const dir = e.key === 'ArrowLeft' ? -1 : 1;
       if (menuRow === 0) {
         selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
-      } else {
+      } else if (menuRow === 1) {
+        gameMode = gameMode === 'race' ? 'elimination' : 'race';
+      } else if (gameMode === 'race') {
         LAPS = Math.max(1, Math.min(9, LAPS + dir));
+      } else {
+        POINTS_TO_WIN = Math.max(1, Math.min(9, POINTS_TO_WIN + dir));
       }
     }
     if (e.key === 'Enter' || e.key === ' ') {
@@ -208,6 +250,11 @@ let editObstacles = [];       // {x, y, size} obstacles placed in the editor
 let editTool      = 'track';  // 'track' | 'obstacle'
 let musicMuted    = false;    // whether the soundtrack is muted
 let paused        = false;    // whether the race is paused
+let gameMode      = 'race';   // 'race' | 'elimination'
+let POINTS_TO_WIN = 3;        // rounds needed to win the championship (elimination)
+const ELIM_DISTANCE = 200;    // px of track distance behind leader before elimination
+let scores        = [0,0,0,0]; // per-slot cumulative championship points (elimination)
+let elimRoundWinner = -1;     // car id that won the last elimination round
 
 // Cache for car preview images on the start screen, keyed "presetIdx:color"
 const previewImageCache = {};
@@ -228,7 +275,26 @@ let camera = { x: 800, y: 570, zoom: 0.8 };
 
 // (obstacles global, generateObstacles, drawObstacles, resolveObstacleCollisions → obstacles.js)
 
+/** Eliminates cars that are more than ELIM_DISTANCE px of track behind the leader. */
+function updateElimination() {
+  if (gameMode !== 'elimination') return;
+  if (raceTime < 5) return;  // minimum round duration
+  const track = TRACKS[selectedTrack];
+  const active = cars.filter(c => !c.done && !c.dnf);
+  if (active.length <= 1) return;
+  // Wait until every car has crossed the start line at least once (laps >= 0)
+  if (active.some(c => c.laps < 0)) return;
+  const maxDist = Math.max(...active.map(c => (c.laps + c.progress) * track.totalLength));
+  active.forEach(car => {
+    if (maxDist - (car.laps + car.progress) * track.totalLength > ELIM_DISTANCE) {
+      car.dnf = true;
+      spawnBurst(car.x, car.y, car.color);
+    }
+  });
+}
+
 function initRace() {
+  saveSettings();
   cars = []; finishOrder = []; raceTime = 0; particles = [];
   allHumansFinishedAt = -1; allOutAt = -1; paused = false;
   generateObstacles(TRACKS[selectedTrack]);
@@ -435,7 +501,7 @@ function drawHUD() {
   ctx.fillStyle = COLORS.primary; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'left';
   ctx.fillText('TIME  ' + formatTime(raceTime), 10, 15);
   ctx.fillStyle = track.col; ctx.font = '20px Courier New'; ctx.textAlign = 'right';
-  ctx.fillText(track.name + '  L' + (Math.min(sorted[0].laps + 1, LAPS)) + '/' + LAPS, W - 10, 15);
+  ctx.fillText(track.name + '  L' + (Math.min(Math.max(0, sorted[0].laps) + 1, LAPS)) + '/' + LAPS, W - 10, 15);
 
   // Per-car standings in the centre of the top bar
   sorted.forEach((car, i) => {
@@ -444,7 +510,8 @@ function drawHUD() {
     ctx.fillText((i + 1) + '. ' + car.label, x, 10);
     ctx.font = '16px Courier New';
     ctx.fillStyle = car.done ? COLORS.primary : car.dnf ? '#ff6644' : COLORS.white;
-    ctx.fillText(car.done ? '✓ DONE' : car.dnf ? '✗ OUT' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS, x, 22);
+    const lapStr = (gameMode === 'elimination' && car.laps < 0) ? 'START' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS;
+    ctx.fillText(car.done ? '✓ DONE' : car.dnf ? '✗ OUT' : lapStr, x, 22);
   });
 
   // Speedometer + boost bars along the bottom, one per human player
@@ -534,6 +601,7 @@ function loop(timestamp) {
       cars.forEach(c => updateCar(c, dt));
       resolveCarCollisions();
       resolveObstacleCollisions();
+      updateElimination();
       updateParticles(dt);
       updateCamera(dt);
     }
@@ -547,12 +615,25 @@ function loop(timestamp) {
     if (allOutAt < 0 && cars.every(c => c.done || c.dnf))
       allOutAt = raceTime;
 
+    // Elimination: end as soon as only 1 (or 0) car is still active
+    const elimDone = gameMode === 'elimination' && raceTime > 2 &&
+      cars.filter(c => !c.done && !c.dnf).length <= 1;
+
     const shouldEnd =
       cars.every(c => c.done && !c.dnf) ||                              // 1. all finished
       (allOutAt >= 0 && raceTime - allOutAt >= 5) ||                    // 2. all out for 5 s
-      (allHumansFinishedAt >= 0 && raceTime - allHumansFinishedAt >= 10); // 3. humans done 10 s ago
+      (allHumansFinishedAt >= 0 && raceTime - allHumansFinishedAt >= 10) || // 3. humans done 10 s
+      elimDone;                                                          // 4. elimination winner
 
     if (shouldEnd) {
+      // Award elimination championship point to the round winner
+      if (gameMode === 'elimination') {
+        const active = cars.filter(c => !c.done && !c.dnf);
+        const sorted = [...cars].sort((a, b) => (b.laps + b.progress) - (a.laps + a.progress));
+        const winner = active.length > 0 ? active[0] : sorted[0];
+        scores[winner.id]++;
+        elimRoundWinner = winner.id;
+      }
       // DNF any cars still on-track (leaves finishTime/done unchanged for real finishers)
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
       checkAndSaveHighscores();
@@ -582,8 +663,14 @@ function loop(timestamp) {
     // Handle button clicks before drawing so no mid-draw state changes occur
     if (resultsCooldown <= 0 && mouse.click) {
       const { btnW, btnH, btnY } = RES;
-      if      (inBox(mouse.x, mouse.y, W / 2 + 14, btnY, btnW, btnH)) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
-      else if (inBox(mouse.x, mouse.y, W / 2 - 220,  btnY, btnW, btnH)) { screen = 'start'; setMusicMode('beat'); }
+      const isChampion = gameMode === 'elimination' && scores.some(s => s >= POINTS_TO_WIN);
+      if (inBox(mouse.x, mouse.y, W / 2 + 14, btnY, btnW, btnH)) {
+        if (isChampion) { scores = [0,0,0,0]; screen = 'start'; setMusicMode('beat'); }
+        else { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
+      } else if (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) {
+        if (gameMode === 'elimination') scores = [0,0,0,0];
+        screen = 'start'; setMusicMode('beat');
+      }
     }
     if (screen === 'results') { updateParticles(dt); drawResults(); }
 
