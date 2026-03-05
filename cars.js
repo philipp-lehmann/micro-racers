@@ -97,7 +97,12 @@ function makeCar(id, isAI, color, presetIdx) {
   const spline = track.spline;
   const row    = Math.floor(id / 2);
   const side   = (id % 2 === 0) ? -1 : 1;  // left or right of centerline
-  const startIdx = (spline.length - row * 6 + spline.length) % spline.length;
+  const ROW_GAP = 50; // px between grid rows
+  const targetLen = track.totalLength - row * ROW_GAP;
+  let startIdx = 0;
+  for (let k = track.cumulativeLengths.length - 1; k >= 0; k--) {
+    if (track.cumulativeLengths[k] <= targetLen) { startIdx = k; break; }
+  }
   const nextPt   = spline[(startIdx + 1) % spline.length];
   const angle    = Math.atan2(nextPt[1] - spline[startIdx][1], nextPt[0] - spline[startIdx][0]);
   // Perpendicular offset direction so paired cars sit side-by-side
