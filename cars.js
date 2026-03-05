@@ -17,17 +17,16 @@ const GRAVEL_ZONE = 40;   // px
 const CAR_PRESETS = [
   {
     name:        'CLASSIC',
-    svgTemplate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
-  <path d="M5,5 L37,5 L42,12 L37,19 L5,19 Q2,16 2,12 Q2,8 5,5Z" fill="none" stroke="CARCOLOR" stroke-width="1.5"/>
-  <path d="M18,7.5 L29,7.5 L29,16.5 L18,16.5 Q16,14.5 16,12 Q16,9.5 18,7.5Z" fill="CARCOLOR" fill-opacity="0.18" stroke="CARCOLOR" stroke-width="0.8"/>
-  <rect x="2" y="3" width="4.5" height="3.5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <rect x="2" y="17.5" width="4.5" height="3.5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <ellipse cx="11" cy="3.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <ellipse cx="11" cy="20.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <ellipse cx="30" cy="3.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <ellipse cx="30" cy="20.5" rx="5.5" ry="2.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <circle cx="41" cy="12" r="1.8" fill="#dddddd" opacity="0.7"/>
-</svg>`,
+    svgTemplate: `<svg width="44" height="24" viewBox="0 0 44 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="4" y="5.5" width="36" height="13" rx="2" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="24" y="5.5" width="6" height="13" rx="2" fill="CARCOLOR" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="13" y="5.5" width="18" height="13" rx="2" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="7" y="2.5" width="8" height="3" rx="1.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="7" y="18.5" width="8" height="3" rx="1.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="28" y="2.5" width="8" height="3" rx="1.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="28" y="18.5" width="8" height="3" rx="1.5" stroke="CARCOLOR" stroke-width="1.5"/>
+</svg>
+`,
     topSpeed:    220,   // px/s
     accel:       162,   // quadratic-drag acceleration constant
     brake:       260,   // deceleration when braking (px/s²)
@@ -38,15 +37,18 @@ const CAR_PRESETS = [
   },
   {
     name:        'FAST',
-    svgTemplate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
-  <path d="M3,8 L36,6 L44,12 L36,18 L3,16 Q1,14 1,12 Q1,10 3,8Z" fill="none" stroke="CARCOLOR" stroke-width="1.5"/>
-  <ellipse cx="22" cy="12" rx="7" ry="3.5" fill="CARCOLOR" fill-opacity="0.18" stroke="CARCOLOR" stroke-width="0.8"/>
-  <path d="M36,6 L43,4 L43,7 L39,7Z" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <path d="M36,18 L43,20 L43,17 L39,17Z" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <rect x="1" y="5" width="3" height="5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <rect x="1" y="14" width="3" height="5" rx="0.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <circle cx="43" cy="12" r="1.2" fill="#dddddd" opacity="0.8"/>
-</svg>`,
+    svgTemplate: `<svg width="44" height="24" viewBox="0 0 44 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M4 8.1025C4 6.9587 4.95751 6.04788 6.09988 6.10499L38.0999 7.70499C39.1643 7.75821 40 8.63675 40 9.7025V14.2975C40 15.3632 39.1643 16.2418 38.0999 16.295L6.09988 17.895C4.95751 17.9521 4 17.0413 4 15.8975V8.1025Z" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="18" y="9" width="8" height="6" rx="2" fill="CARCOLOR" stroke="CARCOLOR" stroke-width="1.5"/>
+<path d="M15 5.5C15 3.84315 13.6569 2.5 12 2.5H10C8.34315 2.5 7 3.84315 7 5.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<path d="M7 18.5C7 20.1569 8.34315 21.5 10 21.5H12C13.6569 21.5 15 20.1569 15 18.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="28" y="2.5" width="8" height="3" rx="1.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="28" y="18.5" width="8" height="3" rx="1.5" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="7" y="8" width="3" height="8" fill="#D9D9D9"/>
+<rect x="7" y="8" width="3" height="8" rx="1.5" fill="CARCOLOR" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="38" y="10" width="2" height="4" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+</svg>
+`,
     topSpeed:    310,
     accel:       220,
     brake:       190,
@@ -57,17 +59,18 @@ const CAR_PRESETS = [
   },
   {
     name:        'TANK',
-    svgTemplate: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
-  <rect x="3" y="2" width="37" height="20" rx="2.5" fill="none" stroke="CARCOLOR" stroke-width="1.5"/>
-  <rect x="38" y="3" width="4" height="18" rx="1.5" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.55"/>
-  <rect x="14" y="5" width="16" height="14" rx="2" fill="CARCOLOR" fill-opacity="0.18" stroke="CARCOLOR" stroke-width="0.8"/>
-  <rect x="4" y="2" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <rect x="4" y="14.5" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <rect x="27" y="2" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <rect x="27" y="14.5" width="9" height="7.5" rx="1" fill="none" stroke="CARCOLOR" stroke-width="0.8" opacity="0.45"/>
-  <circle cx="42" cy="8" r="1.5" fill="#dddddd" opacity="0.7"/>
-  <circle cx="42" cy="16" r="1.5" fill="#dddddd" opacity="0.7"/>
-</svg>`,
+    svgTemplate: `<svg width="44" height="24" viewBox="0 0 44 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="4" y="4" width="36" height="16" rx="2" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="28" y="6" width="5" height="12" rx="2" fill="CARCOLOR" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="4" y="6" width="14" height="12" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="7" y="1" width="6" height="3" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="7" y="20" width="6" height="3" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="15" y="1" width="6" height="3" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="15" y="20" width="6" height="3" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="33" y="1" width="5" height="3" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+<rect x="33" y="20" width="5" height="3" rx="1" stroke="CARCOLOR" stroke-width="1.5"/>
+</svg>
+`,
     topSpeed:    150,
     accel:       120,
     brake:       420,
