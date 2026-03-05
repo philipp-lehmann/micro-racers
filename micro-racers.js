@@ -253,15 +253,11 @@ document.addEventListener('keydown', e => {
   keys[e.key] = true;
 
   if (screen === 'start') {
-    const playerCounts = [1, 2, 3, 4];
-    if (e.key === 'ArrowUp')   menuRow = (menuRow - 1 + 3) % 3;
-    if (e.key === 'ArrowDown') menuRow = (menuRow + 1) % 3;
+    if (e.key === 'ArrowUp')   menuRow = (menuRow - 1 + 2) % 2;
+    if (e.key === 'ArrowDown') menuRow = (menuRow + 1) % 2;
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const dir = e.key === 'ArrowLeft' ? -1 : 1;
       if (menuRow === 0) {
-        const idx = playerCounts.indexOf(numPlayers);
-        numPlayers = playerCounts[(idx + dir + playerCounts.length) % playerCounts.length];
-      } else if (menuRow === 1) {
         selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
       } else {
         LAPS = Math.max(1, Math.min(9, LAPS + dir));
@@ -315,7 +311,13 @@ canvas.addEventListener('click', e => {
 // ── GAME STATE ────────────────────────────────────
 let screen        = 'start';  // 'start' | 'countdown' | 'race' | 'results' | 'tracks' | 'editor'
 let selectedTrack = 0;        // index into TRACKS
-let numPlayers    = 1;        // how many human players (1, 2, or 4)
+// Per-slot config for the start screen: mode 'human'|'ai', preset index into CAR_PRESETS
+let playerSlots = [
+  { mode: 'human', preset: 0 },
+  { mode: 'ai',    preset: 0 },
+  { mode: 'ai',    preset: 0 },
+  { mode: 'ai',    preset: 0 },
+];
 let cars          = [];       // all four car objects
 let finishOrder   = [];       // car IDs in the order they finished
 let raceTime      = 0;        // total elapsed race time in seconds
@@ -341,8 +343,11 @@ let camera = { x: 800, y: 570, zoom: 0.8 };
 function initRace() {
   cars = []; finishOrder = []; raceTime = 0; particles = [];
   allHumansFinishedAt = -1; allOutAt = -1;
-  for (let i = 0; i < 4; i++)
-    cars.push(makeCar(i, i >= numPlayers, i < numPlayers ? COLORS.pc[i] : muteColor(COLORS.pc[i])));
+  playerSlots.forEach((slot, i) => {
+    const isAI = slot.mode === 'ai';
+    const color = isAI ? muteColor(COLORS.pc[i]) : COLORS.pc[i];
+    cars.push(makeCar(i, isAI, color, slot.preset));
+  });
   camera.x = cars.reduce((s, c) => s + c.x, 0) / cars.length;
   camera.y = cars.reduce((s, c) => s + c.y, 0) / cars.length;
   camera.zoom = 1.25;
@@ -621,13 +626,11 @@ function drawStart() {
   ctx.save();
   ctx.beginPath(); ctx.rect(LEFT_W, 0, RIGHT_W, H); ctx.clip();
 
-  // Compute world-space bounding box to fit the track into the column
   const xs = track.spline.map(p => p[0]);
   const ys = track.spline.map(p => p[1]);
   const xmin = Math.min(...xs), xmax = Math.max(...xs);
   const ymin = Math.min(...ys), ymax = Math.max(...ys);
   const tcx = (xmin + xmax) / 2, tcy = (ymin + ymax) / 2;
-  // Iso projects (worldW + worldH) world units onto the screen x axis
   const worldSpan = (xmax - xmin) + (ymax - ymin);
   const previewPad = 110;
   const zoomX = (RIGHT_W - previewPad * 2) / (worldSpan * ISO_SCALE);
@@ -641,72 +644,118 @@ function drawStart() {
   drawTrack(track, 0.88);
   ctx.restore();
 
-  // Track name overlaid at the bottom of the right column (screen-space, outside iso)
+  // Track name at the bottom of the right column
   const rcx = LEFT_W + RIGHT_W / 2;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = track.col; ctx.font = 'bold 30px Courier New';
-  ctx.shadowColor = track.col; ctx.shadowBlur = menuRow === 1 ? 22 : 12;
+  ctx.shadowColor = track.col; ctx.shadowBlur = menuRow === 0 ? 22 : 12;
   ctx.fillText(track.name, rcx, H - 112); ctx.shadowBlur = 0;
   ctx.fillStyle = COLORS.muted; ctx.font = '16px Courier New';
   ctx.fillText(track.sub + '  ·  ' + (selectedTrack + 1) + ' / ' + TRACKS.length, rcx, H - 82);
 
-  // ── Title (left column, top-left) ──
+  // ── Title ──
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   const glow = 18 + Math.sin(titlePulse) * 8;
   ctx.shadowColor = COLORS.primary; ctx.shadowBlur = glow;
   ctx.fillStyle = COLORS.primary; ctx.font = 'bold 52px Courier New';
-  ctx.fillText('MICRO REVAMPED', ROW_X, 100); ctx.shadowBlur = 0;
+  ctx.fillText('MICRO RACERS', ROW_X, 95); ctx.shadowBlur = 0;
 
-  // ── Keyboard-navigable rows ──
+  // ── Player picker cards (2 × 2 grid) ──
+  const PICKERS_Y = 155;
+  const CARD_GAP  = 10;
+  const CARD_W    = (ROW_W - CARD_GAP) / 2;   // ≈265px
+  const CARD_H    = 120;
+  const HDR_H     = 36;
+
+  for (let i = 0; i < 4; i++) {
+    const col   = i % 2;
+    const row   = Math.floor(i / 2);
+    const cx    = ROW_X + col * (CARD_W + CARD_GAP);
+    const cy    = PICKERS_Y + row * (CARD_H + CARD_GAP);
+    const slot  = playerSlots[i];
+    const pcol  = COLORS.pc[i];
+    const isHuman = slot.mode === 'human';
+
+    // Card border + background
+    ctx.fillStyle   = pcol + (isHuman ? '22' : '0d');
+    ctx.strokeStyle = pcol + (isHuman ? 'cc' : '55');
+    ctx.lineWidth   = isHuman ? 2 : 1;
+    ctx.fillRect(cx, cy, CARD_W, CARD_H);
+    ctx.strokeRect(cx, cy, CARD_W, CARD_H);
+
+    // Header bar — click to toggle human/ai
+    const toggleHov = inBox(mouse.x, mouse.y, cx, cy, CARD_W, HDR_H);
+    ctx.fillStyle = toggleHov ? pcol + '44' : pcol + '28';
+    ctx.fillRect(cx, cy, CARD_W, HDR_H);
+    if (mouse.click && toggleHov) slot.mode = isHuman ? 'ai' : 'human';
+
+    // Player label (P1…P4)
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = pcol; ctx.font = 'bold 18px Courier New';
+    ctx.textAlign = 'left';
+    ctx.fillText('P' + (i + 1), cx + 12, cy + HDR_H / 2);
+
+    // Human / AI badge
+    ctx.font = 'bold 13px Courier New';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = isHuman ? COLORS.primary : COLORS.dim;
+    ctx.fillText(isHuman ? '● HUMAN' : '○  AI', cx + CARD_W - 12, cy + HDR_H / 2);
+
+    // Car type picker — left half prev, right half next
+    const pickY = cy + HDR_H;
+    const pickH = CARD_H - HDR_H;
+    const prevHov = inBox(mouse.x, mouse.y, cx,              pickY, CARD_W / 2, pickH);
+    const nextHov = inBox(mouse.x, mouse.y, cx + CARD_W / 2, pickY, CARD_W / 2, pickH);
+    if (mouse.click && prevHov) slot.preset = (slot.preset - 1 + CAR_PRESETS.length) % CAR_PRESETS.length;
+    if (mouse.click && nextHov) slot.preset = (slot.preset + 1) % CAR_PRESETS.length;
+
+    ctx.font = 'bold 14px Courier New'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = (prevHov || nextHov) ? COLORS.secondary : COLORS.dim;
+    ctx.textAlign = 'left';  ctx.fillText('◀', cx + 10,          pickY + pickH / 2);
+    ctx.textAlign = 'right'; ctx.fillText('▶', cx + CARD_W - 10, pickY + pickH / 2);
+
+    ctx.font = (isHuman ? 'bold ' : '') + '20px Courier New';
+    ctx.fillStyle = isHuman ? COLORS.white : COLORS.dim;
+    ctx.textAlign = 'center';
+    ctx.fillText(CAR_PRESETS[slot.preset].name, cx + CARD_W / 2, pickY + pickH / 2);
+  }
+
+  // ── Keyboard-navigable rows: TRACK + LAPS ──
+  const ROWS_Y  = PICKERS_Y + 2 * CARD_H + CARD_GAP + 16;
   const rowDefs = [
-    { label: 'PLAYERS', value: numPlayers + (numPlayers === 1 ? ' PLAYER'  : ' PLAYERS') },
-    { label: 'TRACK',   value: track.name },
-    { label: 'LAPS',    value: LAPS       + (LAPS       === 1 ? ' LAP'     : ' LAPS')    },
+    { label: 'TRACK', value: track.name },
+    { label: 'LAPS',  value: LAPS + (LAPS === 1 ? ' LAP' : ' LAPS') },
   ];
-
-  const playerCounts = [1, 2, 3, 4];
-  rowDefs.forEach((row, i) => {
-    const ry  = 280 + i * 108;
+  rowDefs.forEach((rowDef, i) => {
+    const ry  = ROWS_Y + i * (ROW_H + 8);
     const rcy = ry + ROW_H / 2;
     const hovered = inBox(mouse.x, mouse.y, ROW_X, ry, ROW_W, ROW_H);
     const sel = menuRow === i || hovered;
     if (hovered && mouse.click) {
       menuRow = i;
       const dir = mouse.x < ROW_X + ROW_W / 2 ? -1 : 1;
-      if (i === 0) {
-        const idx = playerCounts.indexOf(numPlayers);
-        numPlayers = playerCounts[(idx + dir + playerCounts.length) % playerCounts.length];
-      } else if (i === 1) {
-        selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
-      } else {
-        LAPS = Math.max(1, Math.min(9, LAPS + dir));
-      }
+      if (i === 0) selectedTrack = (selectedTrack + dir + TRACKS.length) % TRACKS.length;
+      else         LAPS = Math.max(1, Math.min(9, LAPS + dir));
     }
-
     ctx.save();
     ctx.globalAlpha = sel ? 1 : 0.9;
-
-    ctx.fillStyle   = sel ? COLORS.primary + BTN_DIM : COLORS.secondary + BTN_DIM
-    ctx.strokeStyle = sel ? COLORS.primary        : COLORS.secondary;
+    ctx.fillStyle   = sel ? COLORS.primary + BTN_DIM : COLORS.secondary + BTN_DIM;
+    ctx.strokeStyle = sel ? COLORS.primary            : COLORS.secondary;
     ctx.lineWidth   = sel ? 2 : 1;
     ctx.fillRect(ROW_X, ry, ROW_W, ROW_H);
     ctx.strokeRect(ROW_X, ry, ROW_W, ROW_H);
-    ctx.shadowBlur = 0;
-
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillStyle = sel ? COLORS.primary : COLORS.secondary;
     ctx.font = '15px Courier New';
-    ctx.fillText(row.label, ROW_X + 26, rcy);
-
+    ctx.fillText(rowDef.label, ROW_X + 26, rcy);
     ctx.textAlign = 'center';
-    ctx.fillStyle = sel ? COLORS.primary : COLORS.secondary;
     ctx.font = (sel ? 'bold ' : '') + '28px Courier New';
-    ctx.fillText('←  ' + row.value + '  →', ROW_X + ROW_W / 2, rcy);
+    ctx.fillText('←  ' + rowDef.value + '  →', ROW_X + ROW_W / 2, rcy);
     ctx.restore();
   });
 
   // ── START RACE button ──
-  const sbY = 280 + 3 * 108 + 20;  // 20px gap after last row
+  const sbY = ROWS_Y + 2 * (ROW_H + 8) + 12;
   const startHovered = inBox(mouse.x, mouse.y, ROW_X, sbY, ROW_W, ROW_H);
   const pulse = 0.6 + 0.4 * Math.abs(Math.sin(titlePulse * 1.5));
   ctx.shadowColor = COLORS.primary; ctx.shadowBlur = startHovered ? 32 : 12 * pulse;
@@ -723,7 +772,7 @@ function drawStart() {
   const etY = sbY + ROW_H + 8;
   const etH = 50;
   const editTracksHovered = inBox(mouse.x, mouse.y, ROW_X, etY, ROW_W, etH);
-  ctx.fillStyle   = editTracksHovered ? COLORS.secondary : COLORS.secondary + BTN_DIM
+  ctx.fillStyle   = editTracksHovered ? COLORS.secondary : COLORS.secondary + BTN_DIM;
   ctx.strokeStyle = COLORS.secondary; ctx.lineWidth = 1.5;
   if (editTracksHovered) { ctx.shadowColor = COLORS.secondary; ctx.shadowBlur = 10; }
   ctx.fillRect(ROW_X, etY, ROW_W, etH);

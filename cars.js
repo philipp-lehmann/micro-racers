@@ -25,6 +25,26 @@ const CAR_PRESETS = [
     boostFactor: 1.3,   // top-speed multiplier while boost is active
     reverseMax:  65,    // px/s
   },
+  {
+    name:        'FAST',
+    topSpeed:    310,
+    accel:       220,
+    brake:       190,
+    friction:    65,
+    turnRate:    2.2,
+    boostFactor: 1.4,
+    reverseMax:  40,
+  },
+  {
+    name:        'TANK',
+    topSpeed:    150,
+    accel:       120,
+    brake:       420,
+    friction:    170,
+    turnRate:    4.2,
+    boostFactor: 1.15,
+    reverseMax:  90,
+  },
 ];
 
 // ── CAR FACTORY ───────────────────────────────────
@@ -33,7 +53,7 @@ const CAR_PRESETS = [
  * Cars are staggered in two columns (left/right) and rows (front/back)
  * just behind the start/finish line.
  */
-function makeCar(id, isAI, color) {
+function makeCar(id, isAI, color, presetIdx) {
   const track  = TRACKS[selectedTrack];
   const spline = track.spline;
   const row    = Math.floor(id / 2);
@@ -57,7 +77,7 @@ function makeCar(id, isAI, color) {
     aiTarget:     (startIdx + 10) % spline.length,  // next waypoint for the AI
     onTrack:      true,
     offFraction:  0,   // 0 = fully on track, 1 = fully off; updated each frame
-    stats:        CAR_PRESETS[0],
+    stats:        CAR_PRESETS[presetIdx || 0],
     done: false, dnf: false, finishTime: 0,
     label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
     boostCharge: 0.5, isBoosting: false,
