@@ -35,6 +35,7 @@ function drawStart() {
   ctx.scale(previewZoom, previewZoom);
   ctx.translate(-tcx, -tcy);
   drawTrack(track, 0.88);
+  drawObstacles(track.obstacles);
   ctx.restore();
 
   // Track name at the bottom of the right column

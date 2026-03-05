@@ -13,6 +13,7 @@ function drawMiniTrackPreview(track, px, py, pw, ph) {
   ctx.beginPath(); ctx.rect(px, py, pw, ph); ctx.clip();
   ctx.translate(offX, offY); ctx.scale(scale, scale);
   drawTrack(track, 1);
+  drawObstacles(track.obstacles);
   ctx.restore();
 }
 
@@ -61,7 +62,7 @@ function drawTracksScreen() {
   ctx.fillStyle = addHov ? COLORS.bg : COLORS.primary;
   ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('＋  ADD NEW TRACK', addX + addW / 2, addY + addH / 2);
-  if (mouse.click && addHov) { editPts = []; editPreview = null; screen = 'editor'; return; }
+  if (mouse.click && addHov) { editPts = []; editPreview = null; editObstacles = []; editTool = 'track'; screen = 'editor'; return; }
 
   // ── Track list ──
   const visible = TRACKS.slice(0, MAX_ROWS);
