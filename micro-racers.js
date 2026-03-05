@@ -283,7 +283,7 @@ function inBox(mx, my, x, y, w, h) {
 // ── INPUT ─────────────────────────────────────────
 const keys = {};  // set of currently-held keyboard keys
 document.addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Backspace','/','Enter'].includes(e.key)) e.preventDefault();
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Backspace','/','Enter','Escape'].includes(e.key)) e.preventDefault();
   keys[e.key] = true;
 
   if (screen === 'start') {
@@ -302,6 +302,8 @@ document.addEventListener('keydown', e => {
       setMusicMode('beat');
     }
   }
+
+  if (screen === 'race' && e.key === 'Escape') { paused = !paused; mouse.click = false; }
 
   if (screen === 'editor') {
     if (e.key === 'z' || e.key === 'Z') { editPts.pop(); rebuildEditorPreview(); }
@@ -366,6 +368,7 @@ let menuRow       = 0;        // which start-screen row is selected (0–2)
 let editPts       = [];       // [x, y, w] points being drawn in the editor
 let editPreview   = null;     // compiled track object for live preview (null if < 3 pts)
 let musicMuted    = false;    // whether the soundtrack is muted
+let paused        = false;    // whether the race is paused
 // Race-end timing for the three win conditions
 let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
 let allOutAt            = -1; // raceTime when all cars became done or dnf
@@ -377,7 +380,7 @@ let camera = { x: 800, y: 570, zoom: 0.8 };
 // (physics constants, CAR_PRESETS, makeCar → cars.js)
 function initRace() {
   cars = []; finishOrder = []; raceTime = 0; particles = [];
-  allHumansFinishedAt = -1; allOutAt = -1;
+  allHumansFinishedAt = -1; allOutAt = -1; paused = false;
   playerSlots.forEach((slot, i) => {
     const isAI = slot.mode === 'ai';
     const color = isAI ? muteColor(COLORS.pc[i]) : COLORS.pc[i];
@@ -884,6 +887,66 @@ function drawCountdown() {
   if (countdownNum > 0) ctx.fillText('GET READY  ·  ' + LAPS + ' LAPS', W / 2, H / 2 + 90);
 }
 
+// ── PAUSE MENU ────────────────────────────────────
+function drawPause() {
+  // Dark overlay
+  ctx.fillStyle = 'rgba(0,10,18,0.72)';
+  ctx.fillRect(0, 0, W, H);
+
+  const panW = 380, panH = 310;
+  const panX = W / 2 - panW / 2, panY = H / 2 - panH / 2;
+
+  // Panel background + border
+  ctx.fillStyle = '#001520';
+  ctx.fillRect(panX, panY, panW, panH);
+  ctx.strokeStyle = COLORS.primary; ctx.lineWidth = 1.5;
+  ctx.strokeRect(panX, panY, panW, panH);
+
+  // Title
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = COLORS.primary; ctx.shadowBlur = 18;
+  ctx.fillStyle = COLORS.primary; ctx.font = 'bold 36px Courier New';
+  ctx.fillText('PAUSED', W / 2, panY + 50);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#334455'; ctx.font = '14px Courier New';
+  ctx.fillText('ESC  to resume', W / 2, panY + 80);
+
+  // Buttons
+  const btnW = 300, btnH = 48;
+  const btnX = W / 2 - btnW / 2;
+  const pauseBtns = [
+    { l: 'RESUME RACE ▶',                          y: panY + 110, col: COLORS.primary   },
+    { l: musicMuted ? '♪  SOUND OFF' : '♪  SOUND ON', y: panY + 170, col: musicMuted ? COLORS.danger : COLORS.secondary },
+    { l: 'QUIT TO MENU',                            y: panY + 230, col: COLORS.danger    },
+  ];
+
+  pauseBtns.forEach(btn => {
+    const hov = inBox(mouse.x, mouse.y, btnX, btn.y, btnW, btnH);
+    ctx.fillStyle   = hov ? btn.col : btn.col + BTN_DIM;
+    ctx.strokeStyle = btn.col; ctx.lineWidth = 1.5;
+    if (hov) { ctx.shadowColor = btn.col; ctx.shadowBlur = 10; }
+    ctx.fillRect(btnX, btn.y, btnW, btnH);
+    ctx.strokeRect(btnX, btn.y, btnW, btnH);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = hov ? COLORS.bg : btn.col;
+    ctx.font = 'bold 18px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(btn.l, W / 2, btn.y + btnH / 2);
+
+    if (mouse.click && hov) {
+      if (btn.l.startsWith('RESUME')) {
+        paused = false;
+      } else if (btn.l.includes('SOUND')) {
+        musicMuted = !musicMuted;
+        typeof setMusicMuted === 'function' && setMusicMuted(musicMuted);
+      } else if (btn.l.startsWith('QUIT')) {
+        paused = false;
+        screen = 'start'; setMusicMode('beat');
+      }
+    }
+  });
+}
+
 // Layout constants shared between drawResults and the click handler
 const RES = {
   tableW:   800,
@@ -1322,11 +1385,13 @@ function loop(timestamp) {
     drawCountdown();
 
   } else if (screen === 'race') {
-    raceTime += dt;
-    cars.forEach(c => updateCar(c, dt));
-    resolveCarCollisions();
-    updateParticles(dt);
-    updateCamera(dt);
+    if (!paused) {
+      raceTime += dt;
+      cars.forEach(c => updateCar(c, dt));
+      resolveCarCollisions();
+      updateParticles(dt);
+      updateCamera(dt);
+    }
 
     // ── Win-condition tracking ────────────────────
     const humans = cars.filter(c => !c.isAI);
@@ -1362,6 +1427,7 @@ function loop(timestamp) {
       drawCarLabels();
       drawHUD();
     }
+    if (paused) drawPause();
 
   } else if (screen === 'results') {
     const wasWaiting = resultsCooldown > 0;
