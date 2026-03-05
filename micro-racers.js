@@ -169,6 +169,40 @@ function persistUserTracks() {
 
 loadUserTracks();
 
+// ── HIGHSCORES ────────────────────────────────────
+let highscores = {};   // { "trackName:laps": { finishTime: {time,label}, bestLap: {time,label} } }
+let newRecords = {};   // same shape, truthy if record was broken this race
+
+function loadHighscores() {
+  try { highscores = JSON.parse(localStorage.getItem('mrHighscores') || '{}'); } catch {}
+}
+
+function saveHighscores() {
+  localStorage.setItem('mrHighscores', JSON.stringify(highscores));
+}
+
+function checkAndSaveHighscores() {
+  const key = TRACKS[selectedTrack].name + ':' + LAPS;
+  if (!highscores[key]) highscores[key] = {};
+  const hs = highscores[key];
+  newRecords = {};
+
+  cars.filter(c => !c.isAI).forEach(c => {
+    if (c.done && c.finishTime < (hs.finishTime?.time ?? Infinity)) {
+      hs.finishTime = { time: c.finishTime, label: c.label };
+      newRecords.finishTime = true;
+    }
+    if (c.bestLap < (hs.bestLap?.time ?? Infinity)) {
+      hs.bestLap = { time: c.bestLap, label: c.label };
+      newRecords.bestLap = true;
+    }
+  });
+
+  saveHighscores();
+}
+
+loadHighscores();
+
 // ── GEOMETRY HELPERS ──────────────────────────────
 
 /** Minimum distance from point (px, py) to line segment (ax, ay)→(bx, by). */
@@ -279,6 +313,7 @@ document.addEventListener('keydown', e => {
     // All human players are out — any retire key skips the countdown and jumps to results
     if (CONTROLS.some(c => e.key === c.give)) {
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
+      checkAndSaveHighscores();
       resultsCooldown = 0;
       screen = 'results'; setMusicMode('results');
     }
@@ -664,7 +699,7 @@ function drawStart() {
   const PICKERS_Y = 155;
   const CARD_GAP  = 10;
   const CARD_W    = (ROW_W - CARD_GAP) / 2;   // ≈265px
-  const CARD_H    = 120;
+  const CARD_H    = 145;
   const HDR_H     = 36;
 
   for (let i = 0; i < 4; i++) {
@@ -709,15 +744,36 @@ function drawStart() {
     if (mouse.click && prevHov) slot.preset = (slot.preset - 1 + CAR_PRESETS.length) % CAR_PRESETS.length;
     if (mouse.click && nextHov) slot.preset = (slot.preset + 1) % CAR_PRESETS.length;
 
+    // Car preview — SVG image centered above the preset name
+    const prevW = 88, prevH = 48;   // 4× the in-game 22×12 size
+    const imgX  = cx + CARD_W / 2 - prevW / 2;
+    const imgY  = pickY + 6;
+
     ctx.font = 'bold 14px Courier New'; ctx.textBaseline = 'middle';
     ctx.fillStyle = (prevHov || nextHov) ? COLORS.secondary : COLORS.dim;
-    ctx.textAlign = 'left';  ctx.fillText('◀', cx + 10,          pickY + pickH / 2);
-    ctx.textAlign = 'right'; ctx.fillText('▶', cx + CARD_W - 10, pickY + pickH / 2);
+    ctx.textAlign = 'left';  ctx.fillText('◀', cx + 10,          imgY + prevH / 2);
+    ctx.textAlign = 'right'; ctx.fillText('▶', cx + CARD_W - 10, imgY + prevH / 2);
+    const previewImg = CAR_IMAGES[slot.preset];
+    ctx.save();
+    if (previewImg && previewImg.complete && previewImg.naturalWidth > 0) {
+      ctx.shadowColor = pcol; ctx.shadowBlur = isHuman ? 16 : 6;
+      ctx.drawImage(previewImg, imgX, imgY, prevW, prevH);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = pcol + (isHuman ? 'bb' : '44'); ctx.lineWidth = 1;
+      ctx.strokeRect(imgX, imgY, prevW, prevH);
+    } else {
+      // Fallback: plain colored rectangle while image loads
+      ctx.fillStyle = pcol + (isHuman ? '33' : '14');
+      ctx.strokeStyle = pcol + (isHuman ? 'cc' : '44'); ctx.lineWidth = 1;
+      ctx.fillRect(imgX, imgY, prevW, prevH);
+      ctx.strokeRect(imgX, imgY, prevW, prevH);
+    }
+    ctx.restore();
 
-    ctx.font = (isHuman ? 'bold ' : '') + '20px Courier New';
+    ctx.font = (isHuman ? 'bold ' : '') + '13px Courier New';
     ctx.fillStyle = isHuman ? COLORS.white : COLORS.dim;
-    ctx.textAlign = 'center';
-    ctx.fillText(CAR_PRESETS[slot.preset].name, cx + CARD_W / 2, pickY + pickH / 2);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(CAR_PRESETS[slot.preset].name, cx + CARD_W / 2, imgY + prevH + 12);
   }
 
   // ── Keyboard-navigable rows: TRACK + LAPS ──
@@ -951,6 +1007,29 @@ function drawResults() {
   ctx.fillStyle = '#223344'; ctx.font = '16px Courier New';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('TOTAL ELAPSED  ' + formatTime(raceTime), W / 2, btnY + btnH + 22);
+
+  // ── Track Records ────────────────────────────────
+  const hsKey = TRACKS[selectedTrack].name + ':' + LAPS;
+  const hs = highscores[hsKey];
+  if (hs && (hs.finishTime || hs.bestLap)) {
+    const ry = btnY + btnH + 60;
+    ctx.strokeStyle = '#002530'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(tableX, ry - 10); ctx.lineTo(tableX + tableW, ry - 10); ctx.stroke();
+    ctx.fillStyle = '#004433'; ctx.font = '14px Courier New';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('TRACK RECORDS', tableX, ry + 8);
+    const gold = '#ddaa00';
+    if (hs.finishTime) {
+      const isNew = newRecords.finishTime;
+      ctx.fillStyle = isNew ? gold : '#446655'; ctx.font = (isNew ? 'bold ' : '') + '20px Courier New';
+      ctx.fillText('BEST FINISH  ' + formatTime(hs.finishTime.time) + '  ' + hs.finishTime.label + (isNew ? '  ★ NEW RECORD' : ''), tableX + 200, ry + 8);
+    }
+    if (hs.bestLap) {
+      const isNew = newRecords.bestLap;
+      ctx.fillStyle = isNew ? gold : '#446655'; ctx.font = (isNew ? 'bold ' : '') + '20px Courier New';
+      ctx.fillText('BEST LAP  ' + formatTime(hs.bestLap.time) + '  ' + hs.bestLap.label + (isNew ? '  ★ NEW RECORD' : ''), tableX + 200, ry + 36);
+    }
+  }
 }
 
 // ── TRACKS SCREEN ─────────────────────────────────
@@ -1266,6 +1345,7 @@ function loop(timestamp) {
     if (shouldEnd) {
       // DNF any cars still on-track (leaves finishTime/done unchanged for real finishers)
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
+      checkAndSaveHighscores();
       resultsCooldown = 1.5;
       screen = 'results'; setMusicMode('results');
     } else {
