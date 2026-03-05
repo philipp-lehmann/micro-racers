@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 24">
+  <!-- Main body — balanced proportions, car faces RIGHT -->
+  <path d="M5,5 L37,5 L42,12 L37,19 L5,19 Q2,16 2,12 Q2,8 5,5Z" fill="#242424"/>
+  <!-- Cockpit canopy -->
+  <path d="M18,7.5 L29,7.5 L29,16.5 L18,16.5 Q16,14.5 16,12 Q16,9.5 18,7.5Z" fill="#0c1e2e"/>
+  <!-- Rear wing stubs -->
+  <rect x="2" y="3" width="4.5" height="3.5" rx="0.5" fill="#2e2e2e"/>
+  <rect x="2" y="17.5" width="4.5" height="3.5" rx="0.5" fill="#2e2e2e"/>
+  <!-- Wheel covers -->
+  <ellipse cx="11" cy="3.5" rx="5.5" ry="2.5" fill="#1a1a1a"/>
+  <ellipse cx="11" cy="20.5" rx="5.5" ry="2.5" fill="#1a1a1a"/>
+  <ellipse cx="30" cy="3.5" rx="5.5" ry="2.5" fill="#1a1a1a"/>
+  <ellipse cx="30" cy="20.5" rx="5.5" ry="2.5" fill="#1a1a1a"/>
+  <!-- Headlight -->
+  <circle cx="41" cy="12" r="1.8" fill="#dddddd" opacity="0.7"/>
+</svg>

@@ -17,6 +17,7 @@ const GRAVEL_ZONE = 40;   // px
 const CAR_PRESETS = [
   {
     name:        'CLASSIC',
+    svg:         'assets/cars/classic.svg',
     topSpeed:    220,   // px/s
     accel:       162,   // quadratic-drag acceleration constant
     brake:       260,   // deceleration when braking (px/s²)
@@ -27,6 +28,7 @@ const CAR_PRESETS = [
   },
   {
     name:        'FAST',
+    svg:         'assets/cars/fast.svg',
     topSpeed:    310,
     accel:       220,
     brake:       190,
@@ -37,6 +39,7 @@ const CAR_PRESETS = [
   },
   {
     name:        'TANK',
+    svg:         'assets/cars/tank.svg',
     topSpeed:    150,
     accel:       120,
     brake:       420,
@@ -46,6 +49,15 @@ const CAR_PRESETS = [
     reverseMax:  90,
   },
 ];
+
+// Pre-load one Image per preset so drawCar can use ctx.drawImage().
+// Images start loading immediately; by the time a race begins they're ready.
+const CAR_IMAGES = CAR_PRESETS.map(preset => {
+  if (!preset.svg) return null;
+  const img = new Image();
+  img.src = preset.svg;
+  return img;
+});
 
 // ── CAR FACTORY ───────────────────────────────────
 /**
@@ -78,6 +90,7 @@ function makeCar(id, isAI, color, presetIdx) {
     onTrack:      true,
     offFraction:  0,   // 0 = fully on track, 1 = fully off; updated each frame
     stats:        CAR_PRESETS[presetIdx || 0],
+    presetIdx:    presetIdx || 0,
     done: false, dnf: false, finishTime: 0,
     label:    isAI ? 'CPU' + (id + 1) : 'P' + (id + 1),
     boostCharge: 0.5, isBoosting: false,
@@ -263,24 +276,41 @@ function resolveCarCollisions() {
 
 function drawCar(car, withLabel = true) {
   const carWidth = 22, carHeight = 12;
+  const img = CAR_IMAGES[car.presetIdx];
+  const hasImg = img && img.complete && img.naturalWidth > 0;
+
   ctx.save(); ctx.translate(car.x, car.y); ctx.rotate(car.angle);
-  // Body outline; human cars glow brighter than AI cars
+
+  // Glow — human cars glow brighter than AI cars
   ctx.shadowColor = car.isBoosting ? '#ffffff' : car.color;
   ctx.shadowBlur = car.isBoosting ? 28 : (car.onTrack ? 14 : 4);
-  ctx.strokeStyle = car.color; ctx.lineWidth = 1.8;
-  ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
-  // Windscreen area (semi-transparent fill at the rear of the body)
-  ctx.fillStyle = car.color + '44';
-  ctx.fillRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
-  ctx.strokeStyle = car.color; ctx.lineWidth = 0.8;
-  ctx.strokeRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
-  // Front headlight dot
-  ctx.fillStyle = car.color;
-  ctx.beginPath(); ctx.arc(carWidth / 2 - 1, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+
+  if (hasImg) {
+    // Draw the SVG silhouette
+    ctx.drawImage(img, -carWidth / 2, -carHeight / 2, carWidth, carHeight);
+    // Thin colored outline on top for color identity
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = car.color; ctx.lineWidth = 0.7;
+    ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
+  } else {
+    // Fallback: procedural drawing
+    ctx.strokeStyle = car.color; ctx.lineWidth = 1.8;
+    ctx.strokeRect(-carWidth / 2, -carHeight / 2, carWidth, carHeight);
+    // Windscreen area
+    ctx.fillStyle = car.color + '44';
+    ctx.fillRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
+    ctx.strokeStyle = car.color; ctx.lineWidth = 0.8;
+    ctx.strokeRect(carWidth / 2 - 9, -carHeight / 2 + 2, 7, carHeight - 4);
+    // Front headlight dot
+    ctx.fillStyle = car.color;
+    ctx.beginPath(); ctx.arc(carWidth / 2 - 1, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+
   // Speed-streak lines — longer and brighter when boosting
   if (!car.isAI && (Math.abs(car.speed) > 140 || car.isBoosting)) {
     const streakLen = car.isBoosting ? 22 : 10;
     ctx.globalAlpha = car.isBoosting ? 0.7 : 0.25;
+    ctx.shadowBlur = 0;
     ctx.strokeStyle = car.isBoosting ? '#ffffff' : car.color; ctx.lineWidth = 1;
     [-3, 0, 3].forEach(offset => {
       ctx.beginPath();
@@ -290,6 +320,7 @@ function drawCar(car, withLabel = true) {
     });
     ctx.globalAlpha = 1;
   }
+
   ctx.restore();
   if (withLabel) {
     // Car label drawn in world space just below the car body
