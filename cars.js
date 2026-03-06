@@ -256,8 +256,11 @@ function updateCar(car, dt) {
   // 1. Set the flag once the car actually crosses the halfway point from below
   if (car.progress > 0.5 && car.lastProgress < 0.5) car.canCountLap = true;
 
-  // 2. ONLY use this block to handle lap increments
-  if (car.canCountLap && car.lastProgress > 0.86 && car.progress < 0.14 && car.speed > 8) {
+  // 2. ONLY use this block to handle lap increments.
+  // In elimination mode the first crossing (laps=-1→0) skips the canCountLap gate: cars
+  // start just before the line and cross it before reaching halfway for the first time.
+  const firstElimCrossing = (typeof gameMode !== 'undefined' && gameMode === 'elimination' && car.laps < 0);
+  if ((car.canCountLap || firstElimCrossing) && car.lastProgress > 0.86 && car.progress < 0.14 && car.speed > 8) {
     const lapTime = raceTime - car.lapStart;
     if (lapTime < car.bestLap) car.bestLap = lapTime;
     car.lapStart = raceTime;
