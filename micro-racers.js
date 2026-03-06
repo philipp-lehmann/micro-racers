@@ -267,6 +267,7 @@ function getPreviewImage(presetIdx, color) {
 // Race-end timing for the three win conditions
 let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
 let allOutAt            = -1; // raceTime when all cars became done or dnf
+let elimDoneAt          = -1; // raceTime when elimination round reduced to 1 car
 
 // ── ISOMETRIC CAMERA ──────────────────────────────
 const ISO_SCALE = Math.SQRT1_2;  // cos45 = sin45 = 1/√2
@@ -303,7 +304,7 @@ function updateElimination() {
 function initRace() {
   saveSettings();
   cars = []; finishOrder = []; raceTime = 0; particles = [];
-  allHumansFinishedAt = -1; allOutAt = -1; paused = false;
+  allHumansFinishedAt = -1; allOutAt = -1; elimDoneAt = -1; paused = false;
   generateObstacles(TRACKS[selectedTrack]);
   playerSlots.forEach((slot, i) => {
     const isAI = slot.mode === 'ai';
@@ -646,15 +647,16 @@ function loop(timestamp) {
     if (allOutAt < 0 && cars.every(c => c.done || c.dnf))
       allOutAt = raceTime;
 
-    // Elimination: end as soon as only 1 (or 0) car is still active
-    const elimDone = gameMode === 'elimination' && raceTime > 2 &&
-      cars.filter(c => !c.done && !c.dnf).length <= 1;
+    // Elimination: record when only 1 (or 0) car remains, then wait 3 s before ending
+    if (gameMode === 'elimination' && elimDoneAt < 0 && raceTime > 2 &&
+        cars.filter(c => !c.done && !c.dnf).length <= 1)
+      elimDoneAt = raceTime;
 
     const shouldEnd =
-      cars.every(c => c.done && !c.dnf) ||                              // 1. all finished
-      (allOutAt >= 0 && raceTime - allOutAt >= 5) ||                    // 2. all out for 5 s
-      (allHumansFinishedAt >= 0 && raceTime - allHumansFinishedAt >= 10) || // 3. humans done 10 s
-      elimDone;                                                          // 4. elimination winner
+      cars.every(c => c.done && !c.dnf) ||                                    // 1. all finished
+      (allOutAt >= 0 && raceTime - allOutAt >= 5) ||                          // 2. all out for 5 s
+      (allHumansFinishedAt >= 0 && raceTime - allHumansFinishedAt >= 10) ||   // 3. humans done 10 s
+      (elimDoneAt >= 0 && raceTime - elimDoneAt >= 3);                        // 4. elimination winner (3 s delay)
 
     if (shouldEnd) {
       // Award elimination championship point to the round winner
