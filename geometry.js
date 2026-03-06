@@ -123,8 +123,10 @@ function nearestTrackPoint(x, y, track) {
 }
 
 /**
- * Returns how far around the track a position is, as a fraction 0.0–1.0.
- * Uses arc-length parameterisation so the value is physically meaningful.
+ * Returns how far around the track a position is, as a fraction 0.0–1.0,
+ * and the index of the nearest spline segment.
+ * Searches all segments (global) — only use this for one-time initialisation.
+ * @returns {{ progress: number, segIdx: number }}
  */
 function trackProgress(x, y, track) {
   const spline = track.spline;
@@ -143,7 +145,69 @@ function trackProgress(x, y, track) {
   const segLen = (nearestSegIdx + 1 < numPts)
     ? track.cumulativeLengths[nearestSegIdx + 1] - track.cumulativeLengths[nearestSegIdx]
     : track.totalLength - track.cumulativeLengths[nearestSegIdx];
-  return (track.cumulativeLengths[nearestSegIdx] + nearestT * segLen) / track.totalLength;
+  return {
+    progress: (track.cumulativeLengths[nearestSegIdx] + nearestT * segLen) / track.totalLength,
+    segIdx: nearestSegIdx,
+  };
+}
+
+/**
+ * Per-frame variant of trackProgress.
+ * Only searches within ±10 % of the spline around the car's last known segment,
+ * so it cannot snap to a parallel section of a self-intersecting track.
+ * @param {number} segIdx  Last known nearest segment index (stored on the car).
+ * @returns {{ progress: number, segIdx: number }}
+ */
+function trackProgressLocal(x, y, track, segIdx) {
+  const spline = track.spline;
+  const numPts = spline.length;
+  const HALF = Math.ceil(numPts * 0.1);
+  let minDist = Infinity, nearestSeg = segIdx, nearestT = 0;
+  for (let wi = -HALF; wi <= HALF; wi++) {
+    const i = ((segIdx + wi) % numPts + numPts) % numPts;
+    const j = (i + 1) % numPts;
+    const dx = spline[j][0] - spline[i][0], dy = spline[j][1] - spline[i][1];
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq
+      ? Math.max(0, Math.min(1, ((x - spline[i][0]) * dx + (y - spline[i][1]) * dy) / lenSq))
+      : 0;
+    const d = Math.hypot(x - (spline[i][0] + t * dx), y - (spline[i][1] + t * dy));
+    if (d < minDist) { minDist = d; nearestSeg = i; nearestT = t; }
+  }
+  const segLen = (nearestSeg + 1 < numPts)
+    ? track.cumulativeLengths[nearestSeg + 1] - track.cumulativeLengths[nearestSeg]
+    : track.totalLength - track.cumulativeLengths[nearestSeg];
+  return {
+    progress: (track.cumulativeLengths[nearestSeg] + nearestT * segLen) / track.totalLength,
+    segIdx: nearestSeg,
+  };
+}
+
+/**
+ * Per-frame variant of nearestTrackPoint.
+ * Same local-window approach as trackProgressLocal — prevents the off-track
+ * detector from snapping to the road of a parallel section.
+ * @param {number} segIdx  Last known nearest segment index (stored on the car).
+ * @returns {{ dist: number, width: number }}
+ */
+function nearestTrackPointLocal(x, y, track, segIdx) {
+  const spline = track.spline;
+  const numPts = spline.length;
+  const HALF = Math.ceil(numPts * 0.1);
+  let minDist = Infinity, nearWidth = 72;
+  for (let wi = -HALF; wi <= HALF; wi++) {
+    const i = ((segIdx + wi) % numPts + numPts) % numPts;
+    const j = (i + 1) % numPts;
+    const d = distToSegment(x, y, spline[i][0], spline[i][1], spline[j][0], spline[j][1]);
+    if (d < minDist) {
+      minDist = d;
+      const dx = spline[j][0] - spline[i][0], dy = spline[j][1] - spline[i][1];
+      const lenSq = dx * dx + dy * dy;
+      const t = lenSq ? Math.max(0, Math.min(1, ((x - spline[i][0]) * dx + (y - spline[i][1]) * dy) / lenSq)) : 0;
+      nearWidth = spline[i][2] + t * (spline[j][2] - spline[i][2]);
+    }
+  }
+  return { dist: minDist, width: nearWidth };
 }
 
 /** Returns a darkened version of a #rrggbb hex colour (factor 0–1). */

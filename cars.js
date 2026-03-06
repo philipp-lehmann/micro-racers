@@ -119,12 +119,14 @@ function makeCar(id, isAI, color, presetIdx, gridPos) {
   const lateralY = Math.sin(angle + Math.PI / 2);
   const x = spline[startIdx][0] + lateralX * side * 17;
   const y = spline[startIdx][1] + lateralY * side * 17;
+  const initTP = trackProgress(x, y, track);
   return {
     id, isAI, color,
     x, y, angle,
     speed: 0, steering: 0, throttle: 0,
     laps: (typeof gameMode !== 'undefined' && gameMode === 'elimination') ? -1 : 0,
-    progress:     trackProgress(x, y, track),
+    progress:     initTP.progress,
+    splineIdx:    initTP.segIdx,
     lastProgress: 0,
     canCountLap:  false,   // must cross halfway before the finish line counts
     aiTarget:     (startIdx + 10) % spline.length,  // next waypoint for the AI
@@ -235,7 +237,7 @@ function updateCar(car, dt) {
   // ── Off-track detection (gravel-zone gradient) ─
   // offFraction: 0 = fully on track, 1 = fully off.
   // Ramps linearly over GRAVEL_ZONE px past the track edge.
-  const { dist: trackDist, width: localWidth } = nearestTrackPoint(car.x, car.y, track);
+  const { dist: trackDist, width: localWidth } = nearestTrackPointLocal(car.x, car.y, track, car.splineIdx);
   const overEdge = Math.max(0, trackDist - localWidth / 2 - 3);
   car.offFraction = Math.min(1, overEdge / GRAVEL_ZONE);
   car.onTrack = car.offFraction === 0;
@@ -252,7 +254,9 @@ function updateCar(car, dt) {
 
   // ── Lap counting ──────────────────────────────
   car.lastProgress = car.progress;
-  car.progress = trackProgress(car.x, car.y, track);
+  const tp = trackProgressLocal(car.x, car.y, track, car.splineIdx);
+  car.progress = tp.progress;
+  car.splineIdx = tp.segIdx;
 
   // 1. Set the flag once the car actually crosses the halfway point from below
   if (car.progress > 0.5 && car.lastProgress < 0.5) car.canCountLap = true;
