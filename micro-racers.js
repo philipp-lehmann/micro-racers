@@ -457,8 +457,41 @@ function worldToScreen(wx, wy) {
 function updateCamera(dt) {
   const maxZoom = 2.25;
   const minZoom = 0.5;
+
+  // During elimination countdown: lock onto the winner and zoom in hard
+  if (elimDoneAt >= 0 && gameMode === 'elimination') {
+    const track = TRACKS[selectedTrack];
+    const winner = cars.filter(c => !c.done && !c.dnf)[0]
+      || [...cars].sort((a, b) => elimDist(b, track.totalLength) - elimDist(a, track.totalLength))[0];
+    const lerpSpeed = 3;
+    camera.x += (winner.x - camera.x) * lerpSpeed * dt;
+    camera.y += (winner.y - camera.y) * lerpSpeed * dt;
+    camera.zoom += (maxZoom * 2 - camera.zoom) * lerpSpeed * dt;
+    return;
+  }
   const humanCars = cars.filter(c => !c.isAI);
-  const targets = humanCars.length ? humanCars : cars;
+  const activeHumans = humanCars.filter(c => !c.done && !c.dnf);
+  let targets;
+  if (activeHumans.length) {
+    targets = activeHumans;
+  } else if (humanCars.length) {
+    // All humans are out — follow the leading active car instead
+    const track = TRACKS[selectedTrack];
+    const active = cars.filter(c => !c.done && !c.dnf);
+    const pool = active.length ? active : cars;
+    const leader = pool.reduce((best, c) => {
+      const d = gameMode === 'elimination'
+        ? elimDist(c, track.totalLength)
+        : (c.laps + c.progress);
+      const bd = gameMode === 'elimination'
+        ? elimDist(best, track.totalLength)
+        : (best.laps + best.progress);
+      return d > bd ? c : best;
+    });
+    targets = [leader];
+  } else {
+    targets = cars;
+  }
   const cx = targets.reduce((s, c) => s + c.x, 0) / targets.length;
   const cy = targets.reduce((s, c) => s + c.y, 0) / targets.length;
   let spread = 0;
