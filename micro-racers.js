@@ -275,6 +275,14 @@ let camera = { x: 800, y: 570, zoom: 0.8 };
 
 // (obstacles global, generateObstacles, drawObstacles, resolveObstacleCollisions → obstacles.js)
 
+/**
+ * Returns absolute distance from race start for a car in elimination mode.
+ * laps starts at -1, so we add 1 so the odometer reads 0 at the start line.
+ */
+function elimDist(car, totalLength) {
+  return (car.laps + 1 + car.progress) * totalLength;
+}
+
 /** Eliminates cars that are more than ELIM_DISTANCE px of track behind the leader. */
 function updateElimination() {
   if (gameMode !== 'elimination') return;
@@ -282,11 +290,9 @@ function updateElimination() {
   const track = TRACKS[selectedTrack];
   const active = cars.filter(c => !c.done && !c.dnf);
   if (active.length <= 1) return;
-  // Wait until every car has crossed the start line at least once (laps >= 0)
-  if (active.some(c => c.laps < 0)) return;
-  const maxDist = Math.max(...active.map(c => (c.laps + c.progress) * track.totalLength));
+  const maxDist = Math.max(...active.map(c => elimDist(c, track.totalLength)));
   active.forEach(car => {
-    if (maxDist - (car.laps + car.progress) * track.totalLength > ELIM_DISTANCE) {
+    if (maxDist - elimDist(car, track.totalLength) > ELIM_DISTANCE) {
       car.dnf = true;
       spawnBurst(car.x, car.y, car.color);
     }
@@ -484,17 +490,21 @@ function drawCarLabels() {
 
 function drawHUD() {
   const track = TRACKS[selectedTrack];
-  // Sort by effective race position (done cars rank above active ones)
+  const isElim = gameMode === 'elimination';
+
+  // Sort by effective race position.
+  // Elimination: use (laps+1+progress) so laps=-1 cars sort correctly against laps=0 cars.
   const sorted = [...cars].sort((a, b) => {
-    const posA = (a.done ? LAPS + 2 : a.laps) + a.progress;
-    const posB = (b.done ? LAPS + 2 : b.laps) + b.progress;
+    const posA = isElim ? (a.laps + 1 + a.progress) : ((a.done ? LAPS + 2 : a.laps) + a.progress);
+    const posB = isElim ? (b.laps + 1 + b.progress) : ((b.done ? LAPS + 2 : b.laps) + b.progress);
     return posB - posA;
   });
 
-  // Top bar
-  ctx.fillStyle = 'rgba(0,8,18,0.92)'; ctx.fillRect(0, 0, W, 30);
+  // Top bar — taller in elimination mode to fit the gap row
+  const topBarH = isElim ? 44 : 30;
+  ctx.fillStyle = 'rgba(0,8,18,0.92)'; ctx.fillRect(0, 0, W, topBarH);
   ctx.strokeStyle = '#002230'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, 30); ctx.lineTo(W, 30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, topBarH); ctx.lineTo(W, topBarH); ctx.stroke();
   ctx.textBaseline = 'middle';
 
   // Race timer (left) and track name + leading lap (right)
@@ -504,14 +514,34 @@ function drawHUD() {
   ctx.fillText(track.name + '  L' + (Math.min(Math.max(0, sorted[0].laps) + 1, LAPS)) + '/' + LAPS, W - 10, 15);
 
   // Per-car standings in the centre of the top bar
+  // Precompute gaps to leader for all cars
+  const leaderDist = isElim
+    ? elimDist(sorted[0], track.totalLength)
+    : (sorted[0].laps + sorted[0].progress) * track.totalLength;
+
   sorted.forEach((car, i) => {
     const x = W / 2 - 155 + i * 106;
     ctx.fillStyle = car.color; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
     ctx.fillText((i + 1) + '. ' + car.label, x, 10);
+
+    // Sub-label: lap count in race mode, progress-% through current lap in elimination mode
     ctx.font = '16px Courier New';
     ctx.fillStyle = car.done ? COLORS.primary : car.dnf ? '#ff6644' : COLORS.white;
-    const lapStr = (gameMode === 'elimination' && car.laps < 0) ? 'START' : 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS;
-    ctx.fillText(car.done ? '✓ DONE' : car.dnf ? '✗ OUT' : lapStr, x, 22);
+    let subLabel;
+    if (car.done)       subLabel = '✓ DONE';
+    else if (car.dnf)   subLabel = '✗ OUT';
+    else if (isElim)    subLabel = Math.round(car.progress * 100) + '%';
+    else                subLabel = 'L' + Math.min(car.laps + 1, LAPS) + '/' + LAPS;
+    ctx.fillText(subLabel, x, 22);
+
+    // Gap-to-leader row (elimination only, in the extended strip)
+    if (isElim && !car.done && !car.dnf) {
+      const gap = leaderDist - elimDist(car, track.totalLength);
+      const danger = Math.min(1, gap / ELIM_DISTANCE);
+      ctx.font = '11px Courier New';
+      ctx.fillStyle = danger > 0.7 ? '#ff4444' : danger > 0.4 ? '#ffaa00' : '#448866';
+      ctx.fillText(gap < 1 ? 'LEAD' : '-' + Math.round(gap) + 'px', x, 36);
+    }
   });
 
   // Speedometer + boost bars along the bottom, one per human player
