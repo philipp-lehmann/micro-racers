@@ -95,11 +95,12 @@ function makeCarImage(preset, color) {
  * Cars are staggered in two columns (left/right) and rows (front/back)
  * just behind the start/finish line.
  */
-function makeCar(id, isAI, color, presetIdx) {
+function makeCar(id, isAI, color, presetIdx, gridPos) {
   const track  = TRACKS[selectedTrack];
   const spline = track.spline;
-  const row    = Math.floor(id / 2);
-  const side   = (id % 2 === 0) ? -1 : 1;  // left or right of centerline
+  const slot   = (gridPos !== undefined) ? gridPos : id;
+  const row    = Math.floor(slot / 2);
+  const side   = (slot % 2 === 0) ? -1 : 1;  // left or right of centerline
   const ROW_GAP = 50;    // px between each grid row
   const GRID_OFFSET = 20; // extra px behind start line for the front row
   // In elimination mode, grid starts just behind where the previous round's leader stopped.

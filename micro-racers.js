@@ -256,6 +256,7 @@ const ELIM_DISTANCE = 200;    // px of track distance behind leader before elimi
 let scores          = [0,0,0,0]; // per-slot cumulative championship points (elimination)
 let elimRoundWinner = -1;        // car id that won the last elimination round
 let elimStartProgress = 0;       // track progress (0-1) where the next round's grid is placed
+let elimGridOrder     = null;    // car-id order for next round grid (null = randomize)
 
 // Cache for car preview images on the start screen, keyed "presetIdx:color"
 const previewImageCache = {};
@@ -326,10 +327,20 @@ function initRace() {
   cars = []; finishOrder = []; raceTime = 0; particles = [];
   allHumansFinishedAt = -1; allOutAt = -1; elimDoneAt = -1; allHumansOutAt = -1; lastAiCullAt = -1; paused = false;
   generateObstacles(TRACKS[selectedTrack]);
+  // Determine grid position for each car.
+  // Elimination: reverse last round's finish order (last place → pole). First round: randomize.
+  // Race: default order (car id = grid slot).
+  let gridPosOf = i => i;
+  if (gameMode === 'elimination') {
+    const order = elimGridOrder || [...playerSlots.keys()].sort(() => Math.random() - 0.5);
+    const posMap = {};
+    order.forEach((carId, pos) => { posMap[carId] = pos; });
+    gridPosOf = i => posMap[i];
+  }
   playerSlots.forEach((slot, i) => {
     const isAI = slot.mode === 'ai';
     const color = isAI ? muteColor(COLORS.pc[i]) : COLORS.pc[i];
-    cars.push(makeCar(i, isAI, color, slot.preset));
+    cars.push(makeCar(i, isAI, color, slot.preset, gridPosOf(i)));
   });
   camera.x = cars.reduce((s, c) => s + c.x, 0) / cars.length;
   camera.y = cars.reduce((s, c) => s + c.y, 0) / cars.length;
@@ -725,6 +736,8 @@ function loop(timestamp) {
         scores[winner.id]++;
         elimRoundWinner = winner.id;
         elimStartProgress = winner.progress;
+        // Reverse finish order: last place → pole position next round
+        elimGridOrder = sorted.map(c => c.id).reverse();
       }
       // DNF any cars still on-track (leaves finishTime/done unchanged for real finishers)
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
@@ -757,10 +770,10 @@ function loop(timestamp) {
       const { btnW, btnH, btnY } = RES;
       const isChampion = gameMode === 'elimination' && scores.some(s => s >= POINTS_TO_WIN);
       if (inBox(mouse.x, mouse.y, W / 2 + 14, btnY, btnW, btnH)) {
-        if (isChampion) { scores = [0,0,0,0]; elimStartProgress = 0; screen = 'start'; setMusicMode('beat'); }
+        if (isChampion) { scores = [0,0,0,0]; elimStartProgress = 0; elimGridOrder = null; screen = 'start'; setMusicMode('beat'); }
         else { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
       } else if (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) {
-        if (gameMode === 'elimination') { scores = [0,0,0,0]; elimStartProgress = 0; }
+        if (gameMode === 'elimination') { scores = [0,0,0,0]; elimStartProgress = 0; elimGridOrder = null; }
         screen = 'start'; setMusicMode('beat');
       }
     }
