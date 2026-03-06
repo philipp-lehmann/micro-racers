@@ -253,8 +253,9 @@ let paused        = false;    // whether the race is paused
 let gameMode      = 'race';   // 'race' | 'elimination'
 let POINTS_TO_WIN = 3;        // rounds needed to win the championship (elimination)
 const ELIM_DISTANCE = 200;    // px of track distance behind leader before elimination
-let scores        = [0,0,0,0]; // per-slot cumulative championship points (elimination)
-let elimRoundWinner = -1;     // car id that won the last elimination round
+let scores          = [0,0,0,0]; // per-slot cumulative championship points (elimination)
+let elimRoundWinner = -1;        // car id that won the last elimination round
+let elimStartProgress = 0;       // track progress (0-1) where the next round's grid is placed
 
 // Cache for car preview images on the start screen, keyed "presetIdx:color"
 const previewImageCache = {};
@@ -658,11 +659,13 @@ function loop(timestamp) {
     if (shouldEnd) {
       // Award elimination championship point to the round winner
       if (gameMode === 'elimination') {
+        const track = TRACKS[selectedTrack];
         const active = cars.filter(c => !c.done && !c.dnf);
-        const sorted = [...cars].sort((a, b) => (b.laps + b.progress) - (a.laps + a.progress));
+        const sorted = [...cars].sort((a, b) => elimDist(b, track.totalLength) - elimDist(a, track.totalLength));
         const winner = active.length > 0 ? active[0] : sorted[0];
         scores[winner.id]++;
         elimRoundWinner = winner.id;
+        elimStartProgress = winner.progress;
       }
       // DNF any cars still on-track (leaves finishTime/done unchanged for real finishers)
       cars.filter(c => !c.done && !c.dnf).forEach(c => { c.dnf = true; });
@@ -695,10 +698,10 @@ function loop(timestamp) {
       const { btnW, btnH, btnY } = RES;
       const isChampion = gameMode === 'elimination' && scores.some(s => s >= POINTS_TO_WIN);
       if (inBox(mouse.x, mouse.y, W / 2 + 14, btnY, btnW, btnH)) {
-        if (isChampion) { scores = [0,0,0,0]; screen = 'start'; setMusicMode('beat'); }
+        if (isChampion) { scores = [0,0,0,0]; elimStartProgress = 0; screen = 'start'; setMusicMode('beat'); }
         else { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
       } else if (inBox(mouse.x, mouse.y, W / 2 - 220, btnY, btnW, btnH)) {
-        if (gameMode === 'elimination') scores = [0,0,0,0];
+        if (gameMode === 'elimination') { scores = [0,0,0,0]; elimStartProgress = 0; }
         screen = 'start'; setMusicMode('beat');
       }
     }

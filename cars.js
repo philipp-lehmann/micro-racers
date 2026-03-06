@@ -102,7 +102,11 @@ function makeCar(id, isAI, color, presetIdx) {
   const side   = (id % 2 === 0) ? -1 : 1;  // left or right of centerline
   const ROW_GAP = 50;    // px between each grid row
   const GRID_OFFSET = 20; // extra px behind start line for the front row
-  const targetLen = track.totalLength - GRID_OFFSET - row * ROW_GAP;
+  // In elimination mode, grid starts just behind where the previous round's leader stopped.
+  const baseLen = (typeof elimStartProgress !== 'undefined' && gameMode === 'elimination')
+    ? elimStartProgress * track.totalLength
+    : track.totalLength;
+  const targetLen = ((baseLen - GRID_OFFSET - row * ROW_GAP) % track.totalLength + track.totalLength) % track.totalLength;
   let startIdx = 0;
   for (let k = track.cumulativeLengths.length - 1; k >= 0; k--) {
     if (track.cumulativeLengths[k] <= targetLen) { startIdx = k; break; }
@@ -140,7 +144,17 @@ function makeCar(id, isAI, color, presetIdx) {
 
 /** Advances a single car's physics and AI/input state by dt seconds. */
 function updateCar(car, dt) {
-  if (car.done || car.dnf) return;
+  // Done/DNF cars coast to a stop under friction rather than freezing instantly.
+  if (car.done || car.dnf) {
+    if (Math.abs(car.speed) < 1) return;
+    const frictionDelta = car.stats.friction * dt;
+    car.speed = Math.abs(car.speed) < frictionDelta ? 0 : car.speed - Math.sign(car.speed) * frictionDelta;
+    car.x += Math.cos(car.angle) * car.speed * dt;
+    car.y += Math.sin(car.angle) * car.speed * dt;
+    car.x = Math.max(6, Math.min(W - 6, car.x));
+    car.y = Math.max(6, Math.min(H - 6, car.y));
+    return;
+  }
   const track = TRACKS[selectedTrack];
 
   // ── Input ──────────────────────────────────────
