@@ -268,6 +268,8 @@ function getPreviewImage(presetIdx, color) {
 let allHumansFinishedAt = -1; // raceTime when the last human crossed the line
 let allOutAt            = -1; // raceTime when all cars became done or dnf
 let elimDoneAt          = -1; // raceTime when elimination round reduced to 1 car
+let allHumansOutAt      = -1; // raceTime when every human is done or dnf
+let lastAiCullAt        = -1; // raceTime of the most recent ai cull
 
 // ── ISOMETRIC CAMERA ──────────────────────────────
 const ISO_SCALE = Math.SQRT1_2;  // cos45 = sin45 = 1/√2
@@ -276,6 +278,24 @@ let camera = { x: 800, y: 570, zoom: 0.8 };
 // (physics constants, CAR_PRESETS, makeCar → cars.js)
 
 // (obstacles global, generateObstacles, drawObstacles, resolveObstacleCollisions → obstacles.js)
+
+/** Once all humans are out, DNFs the last-placed active car every 3 s. */
+function updateAiCull() {
+  if (allHumansOutAt < 0) return;
+  const active = cars.filter(c => !c.done && !c.dnf);
+  if (active.length <= 1) return;
+  const ref = lastAiCullAt >= 0 ? lastAiCullAt : allHumansOutAt;
+  if (raceTime - ref < 3) return;
+  const track = TRACKS[selectedTrack];
+  const last = active.reduce((worst, c) => {
+    const d  = gameMode === 'elimination' ? elimDist(c,     track.totalLength) : (c.laps     + c.progress);
+    const wd = gameMode === 'elimination' ? elimDist(worst, track.totalLength) : (worst.laps + worst.progress);
+    return d < wd ? c : worst;
+  });
+  last.dnf = true;
+  spawnBurst(last.x, last.y, last.color);
+  lastAiCullAt = raceTime;
+}
 
 /**
  * Returns absolute distance from race start for a car in elimination mode.
@@ -304,7 +324,7 @@ function updateElimination() {
 function initRace() {
   saveSettings();
   cars = []; finishOrder = []; raceTime = 0; particles = [];
-  allHumansFinishedAt = -1; allOutAt = -1; elimDoneAt = -1; paused = false;
+  allHumansFinishedAt = -1; allOutAt = -1; elimDoneAt = -1; allHumansOutAt = -1; lastAiCullAt = -1; paused = false;
   generateObstacles(TRACKS[selectedTrack]);
   playerSlots.forEach((slot, i) => {
     const isAI = slot.mode === 'ai';
@@ -667,6 +687,7 @@ function loop(timestamp) {
       resolveCarCollisions();
       resolveObstacleCollisions();
       updateElimination();
+      updateAiCull();
       updateParticles(dt);
       updateCamera(dt);
     }
@@ -679,6 +700,9 @@ function loop(timestamp) {
     // Condition 2: record when every car is out of the race (finished or retired)
     if (allOutAt < 0 && cars.every(c => c.done || c.dnf))
       allOutAt = raceTime;
+    // AI cull trigger: record when every human is done or dnf
+    if (allHumansOutAt < 0 && humans.length > 0 && humans.every(c => c.done || c.dnf))
+      allHumansOutAt = raceTime;
 
     // Elimination: record when only 1 (or 0) car remains, then wait 3 s before ending
     if (gameMode === 'elimination' && elimDoneAt < 0 && raceTime > 2 &&
