@@ -69,37 +69,42 @@ function drawStart() {
     const slot  = playerSlots[i];
     const pcol  = COLORS.pc[i];
     const isHuman = slot.mode === 'human';
+    const isOff   = slot.mode === 'off';
 
     // Card border + background
-    ctx.fillStyle   = pcol + (isHuman ? '22' : '0d');
-    ctx.strokeStyle = pcol + (isHuman ? 'cc' : '55');
+    ctx.fillStyle   = isOff ? '#ffffff08' : pcol + (isHuman ? '22' : '0d');
+    ctx.strokeStyle = isOff ? '#ffffff22' : pcol + (isHuman ? 'cc' : '55');
     ctx.lineWidth   = isHuman ? 2 : 1;
     ctx.fillRect(cx, cy, CARD_W, CARD_H);
     ctx.strokeRect(cx, cy, CARD_W, CARD_H);
 
-    // Header bar — click to toggle human/ai
+    // Header bar — click to cycle human → ai → off
     const toggleHov = inBox(mouse.x, mouse.y, cx, cy, CARD_W, HDR_H);
-    ctx.fillStyle = toggleHov ? pcol + '44' : pcol + '28';
+    ctx.fillStyle = toggleHov ? (isOff ? '#ffffff22' : pcol + '44') : (isOff ? '#ffffff11' : pcol + '28');
     ctx.fillRect(cx, cy, CARD_W, HDR_H);
-    if (mouse.click && toggleHov) slot.mode = isHuman ? 'ai' : 'human';
+    if (mouse.click && toggleHov) {
+      if (slot.mode === 'human') slot.mode = 'ai';
+      else if (slot.mode === 'ai') slot.mode = 'off';
+      else slot.mode = 'human';
+    }
 
     // Player label (P1…P4)
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = pcol; ctx.font = 'bold 18px Courier New';
+    ctx.fillStyle = isOff ? COLORS.dim : pcol; ctx.font = 'bold 18px Courier New';
     ctx.textAlign = 'left';
     ctx.fillText('P' + (i + 1), cx + 12, cy + HDR_H / 2);
 
-    // Human / AI badge
+    // Human / AI / Off badge
     ctx.font = 'bold 13px Courier New';
     ctx.textAlign = 'right';
-    ctx.fillStyle = isHuman ? COLORS.primary : COLORS.dim;
-    ctx.fillText(isHuman ? '● HUMAN' : '○  AI', cx + CARD_W - 12, cy + HDR_H / 2);
+    ctx.fillStyle = isHuman ? COLORS.primary : isOff ? COLORS.danger : COLORS.dim;
+    ctx.fillText(isHuman ? '● HUMAN' : isOff ? '✕  OFF' : '○  AI', cx + CARD_W - 12, cy + HDR_H / 2);
 
     // Car type picker — left half prev, right half next
     const pickY = cy + HDR_H;
     const pickH = CARD_H - HDR_H;
-    const prevHov = inBox(mouse.x, mouse.y, cx,              pickY, CARD_W / 2, pickH);
-    const nextHov = inBox(mouse.x, mouse.y, cx + CARD_W / 2, pickY, CARD_W / 2, pickH);
+    const prevHov = !isOff && inBox(mouse.x, mouse.y, cx,              pickY, CARD_W / 2, pickH);
+    const nextHov = !isOff && inBox(mouse.x, mouse.y, cx + CARD_W / 2, pickY, CARD_W / 2, pickH);
     if (mouse.click && prevHov) slot.preset = (slot.preset - 1 + CAR_PRESETS.length) % CAR_PRESETS.length;
     if (mouse.click && nextHov) slot.preset = (slot.preset + 1) % CAR_PRESETS.length;
 
@@ -108,6 +113,7 @@ function drawStart() {
     const imgX  = cx + CARD_W / 2 - prevW / 2;
     const imgY  = pickY + 6;
 
+    ctx.save(); if (isOff) ctx.globalAlpha *= 0.25;
     ctx.font = 'bold 14px Courier New'; ctx.textBaseline = 'middle';
     ctx.fillStyle = (prevHov || nextHov) ? COLORS.secondary : COLORS.dim;
     ctx.textAlign = 'left';  ctx.fillText('◀', cx + 10,          imgY + prevH / 2);
@@ -130,6 +136,7 @@ function drawStart() {
     ctx.fillStyle = isHuman ? COLORS.white : COLORS.dim;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(CAR_PRESETS[slot.preset].name, cx + CARD_W / 2, imgY + prevH + 12);
+    ctx.restore(); // restore the isOff globalAlpha save
   }
 
   // ── Keyboard-navigable rows: TRACK + MODE + LAPS/POINTS ──
@@ -185,7 +192,7 @@ function drawStart() {
   ctx.fillStyle = startHovered ? COLORS.bg : COLORS.primary;
   ctx.font = 'bold 32px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('▶  START RACE', ROW_X + ROW_W / 2, sbY + ROW_H / 2);
-  if (mouse.click && startHovered) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
+  if (mouse.click && startHovered && playerSlots.some(s => s.mode !== 'off')) { initRace(); countdownNum = 3; countdownTime = 0; screen = 'countdown'; setMusicMode('beat'); }
 
   // ── EDIT TRACKS button ──
   const etY = sbY + ROW_H + 8;

@@ -330,17 +330,24 @@ function initRace() {
   // Determine grid position for each car.
   // Elimination: reverse last round's finish order (last place → pole). First round: randomize.
   // Race: default order (car id = grid slot).
-  let gridPosOf = i => i;
+  const activeSlots = playerSlots.map((slot, i) => ({ ...slot, i })).filter(s => s.mode !== 'off');
+  const activeIds   = activeSlots.map(s => s.i);
+  let gridPosOf;
   if (gameMode === 'elimination') {
-    const order = elimGridOrder || [...playerSlots.keys()].sort(() => Math.random() - 0.5);
+    const order = (elimGridOrder ? elimGridOrder.filter(id => activeIds.includes(id)) : null)
+      || activeIds.slice().sort(() => Math.random() - 0.5);
     const posMap = {};
     order.forEach((carId, pos) => { posMap[carId] = pos; });
     gridPosOf = i => posMap[i];
+  } else {
+    const posMap = {};
+    activeIds.forEach((id, pos) => { posMap[id] = pos; });
+    gridPosOf = i => posMap[i];
   }
-  playerSlots.forEach((slot, i) => {
-    const isAI = slot.mode === 'ai';
+  activeSlots.forEach(({ mode, preset, i }) => {
+    const isAI = mode === 'ai';
     const color = isAI ? muteColor(COLORS.pc[i]) : COLORS.pc[i];
-    cars.push(makeCar(i, isAI, color, slot.preset, gridPosOf(i)));
+    cars.push(makeCar(i, isAI, color, preset, gridPosOf(i)));
   });
   camera.x = cars.reduce((s, c) => s + c.x, 0) / cars.length;
   camera.y = cars.reduce((s, c) => s + c.y, 0) / cars.length;
